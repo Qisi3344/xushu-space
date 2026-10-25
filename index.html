@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<title>虚数空间</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #020203; overflow: hidden; overscroll-behavior: none; }
+  body { font-family: "PingFang SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; color: #b9bcc2; -webkit-font-smoothing: antialiased; }
+  canvas#stage { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; cursor: crosshair; }
+  .title { position: fixed; left: 50%; bottom: calc(26px + env(safe-area-inset-bottom)); transform: translateX(-50%); text-align: center; pointer-events: none; user-select: none; }
+  .title h1 { margin: 0; font-weight: 300; font-size: 15px; letter-spacing: .6em; text-indent: .6em; color: rgba(200,204,212,.55); }
+  .title p { margin: 8px 0 0; font-weight: 300; font-size: 12px; letter-spacing: .25em; text-indent: .25em; color: rgba(170,174,182,.35); transition: opacity 2s; }
+  .title p.gone { opacity: 0; }
+  #panel { position: fixed; right: calc(14px + env(safe-area-inset-right)); top: calc(14px + env(safe-area-inset-top)); z-index: 3; font-size: 11px; letter-spacing: .08em; }
+  #toggle { all: unset; cursor: pointer; display: block; margin-left: auto; padding: 6px 10px; color: rgba(190,194,202,.5); border: 1px solid rgba(190,194,202,.12); border-radius: 3px; background: rgba(8,9,11,.35); }
+  #toggle:hover { color: rgba(220,224,232,.8); }
+  #sliders { margin-top: 8px; width: 210px; max-width: calc(100vw - 28px); padding: 12px 14px 6px; box-sizing: border-box; background: rgba(8,9,12,.62); border: 1px solid rgba(190,194,202,.1); border-radius: 4px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  #sliders.hidden { display: none; }
+  .row { margin-bottom: 10px; }
+  .row label { display: flex; justify-content: space-between; color: rgba(190,194,202,.62); margin-bottom: 4px; }
+  .row label span { color: rgba(214,170,110,.6); font-variant-numeric: tabular-nums; }
+  input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 14px; background: transparent; margin: 0; }
+  input[type=range]::-webkit-slider-runnable-track { height: 1px; background: rgba(190,194,202,.22); }
+  input[type=range]::-moz-range-track { height: 1px; background: rgba(190,194,202,.22); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 9px; height: 9px; margin-top: -4px; border-radius: 50%; background: #c9ccd2; }
+  input[type=range]::-moz-range-thumb { width: 9px; height: 9px; border: 0; border-radius: 50%; background: #c9ccd2; }
+  #reset { all: unset; cursor: pointer; display: block; margin: 2px 0 6px; color: rgba(190,194,202,.4); font-size: 10px; }
+  #reset:hover { color: rgba(220,224,232,.75); }
+  #err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 24px; color: rgba(190,194,202,.6); font-size: 13px; line-height: 1.8; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+    "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
+    "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="title"><h1>虚数空间</h1><p id="hint">拨开雾，往洞底看一眼</p></div>
+<div id="panel">
+  <button id="toggle">手感 ▾</button>
+  <div id="sliders" class="hidden"></div>
+</div>
+<div id="err"></div>
+
+<script type="module">
+import * as THREE from 'three/webgpu';
+import {
+  Fn, If, instancedArray, instanceIndex, uniform, float, vec2, vec3, vec4,
+  uv, length, normalize, max, min, clamp, mix, smoothstep, sin, cos, atan, abs, pow,
+  exp, fract, hash, time, texture
+} from 'three/tsl';
+
+// ───────────────────────── 可改常量 ─────────────────────────
+const PARTICLES_DESKTOP = 42000;   // 桌面粒子数
+const PARTICLES_MOBILE  = 16000;   // 手机自动降一档
+const CLOUD_RADIUS = 2.2;          // 云团半径（世界单位）
+const CLOUD_CENTER = new THREE.Vector3(0, 0.55, 0); // 画面中央偏上
+
+const DEFAULTS = {
+  stiffness: 9,      // 回弹刚度
+  damping: 1.25,     // 阻尼（偏低 = 欠阻尼，有过冲）
+  radius: 0.8,       // 斥力半径（× 云团半径）
+  strength: 55,      // 斥力强度
+  speedWeight: 1.0   // 鼠标速度加权
+};
+const SLIDERS = [
+  { key: 'stiffness',   label: '回弹刚度',     min: 1.5, max: 40,  step: 0.5 },
+  { key: 'damping',     label: '阻尼',         min: 0.1, max: 8,   step: 0.05 },
+  { key: 'radius',      label: '斥力半径',     min: 0.3, max: 1.6, step: 0.05 },
+  { key: 'strength',    label: '斥力强度',     min: 0,   max: 140, step: 1 },
+  { key: 'speedWeight', label: '鼠标速度加权', min: 0,   max: 2.5, step: 0.05 }
+];
+
+const isMobile = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 600;
+const qs = new URLSearchParams(location.search);
+const COUNT = +qs.get('n') || (isMobile ? PARTICLES_MOBILE : PARTICLES_DESKTOP); // 也可用 ?n=20000 临时改
+const params = { ...DEFAULTS };
+
+// ───────────────────────── 渲染器 / 相机 ─────────────────────────
+const canvas = document.getElementById('stage');
+const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, alpha: false, forceWebGL: qs.has('webgl') });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight, false);
+renderer.setClearColor(0x020203, 1);
+try { await renderer.init(); }
+catch (e) {
+  const el = document.getElementById('err');
+  el.style.display = 'flex';
+  el.textContent = '这台设备的浏览器打不开虚数空间（需要 WebGPU 或 WebGL2）。';
+  throw e;
+}
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 100);
+
+function frame() {
+  const aspect = innerWidth / innerHeight;
+  camera.aspect = aspect;
+  // 让云团在竖屏下也完整：按宽和高中更紧的一边取距离
+  const vFov = THREE.MathUtils.degToRad(camera.fov);
+  const needH = CLOUD_RADIUS * 3.4;                  // 竖向要容纳的高度
+  const needW = CLOUD_RADIUS * 2.9;                  // 横向要容纳的宽度
+  const dH = needH / 2 / Math.tan(vFov / 2);
+  const dW = needW / 2 / Math.tan(vFov / 2) / aspect;
+  camera.position.set(0, 0.15, Math.max(dH, dW));
+  camera.lookAt(0, 0.15, 0);
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight, false);
+}
+frame();
+addEventListener('resize', frame);
+
+// ───────────────────────── uniforms ─────────────────────────
+const uMouse     = uniform(new THREE.Vector3(99, 99, 0));
+const uMouseVel  = uniform(new THREE.Vector3());
+const uActive    = uniform(0);     // 鼠标"在搅动"的包络 0..1，停下即衰减
+const uSpeed     = uniform(0);     // 归一化鼠标速度
+const uDt        = uniform(1 / 60);
+const uK         = uniform(params.stiffness);
+const uC         = uniform(params.damping);
+const uRadius    = uniform(params.radius * CLOUD_RADIUS);
+const uStrength  = uniform(params.strength);
+const uSpeedW    = uniform(params.speedWeight);
+const uCenter    = uniform(CLOUD_CENTER.clone());
+const uEyeOpen   = uniform(0);
+const uEyeGlow   = uniform(0);
+const uPupil     = uniform(new THREE.Vector2());
+const uCity      = uniform(0);
+const uSnake     = uniform(0);
+const uSnakeT    = uniform(0);
+const uBreath    = uniform(0);
+const uHaze      = uniform(1);
+
+// ───────────────────────── 粒子数据（GPU） ─────────────────────────
+// WebGL2 回退时 transform feedback 最多 4 路，所以只用 3 个 buffer：home(xyz)+seed(w)、位置、速度(xyz)+偏离度(w)
+const homeArr = new Float32Array(COUNT * 4);
+const posArr  = new Float32Array(COUNT * 4);
+for (let i = 0; i < COUNT; i++) {
+  // 球内分布：中心更密、边缘稀，外层少量游丝
+  let x, y, z, l;
+  do { x = Math.random() * 2 - 1; y = Math.random() * 2 - 1; z = Math.random() * 2 - 1; l = x * x + y * y + z * z; } while (l > 1 || l < 1e-4);
+  const n = Math.sqrt(l);
+  let r = Math.pow(Math.random(), 0.62);                // 近似均匀球体，投影后中心自然更密
+  if (Math.random() < 0.08) r = 1.0 + Math.random() * 0.25; // 边缘游丝
+  r *= CLOUD_RADIUS;
+  homeArr[i * 4]     = posArr[i * 4]     = x / n * r * 1.04 + CLOUD_CENTER.x;
+  homeArr[i * 4 + 1] = posArr[i * 4 + 1] = y / n * r * 0.94 + CLOUD_CENTER.y;
+  homeArr[i * 4 + 2] = posArr[i * 4 + 2] = z / n * r * 0.85 + CLOUD_CENTER.z;
+  homeArr[i * 4 + 3] = posArr[i * 4 + 3] = Math.random();   // 种子
+}
+const homes      = instancedArray(homeArr, 'vec4');
+const positions  = instancedArray(posArr, 'vec4');   // xyz 位置，w 种子
+const velocities = instancedArray(COUNT, 'vec4');    // xyz 速度，w 偏离回家位置的程度
+
+// ───────────────────────── compute：斥力 + 欠阻尼弹簧 ─────────────────────────
+const computeUpdate = Fn(() => {
+  const i = instanceIndex;
+  const P = positions.element(i);
+  const V = velocities.element(i);
+  const pos = P.xyz.toVar();
+  const vel = V.xyz.toVar();
+  const seed = vec4(homes.element(i).w, hash(i), hash(i.add(11371)), hash(i.add(29501)));
+  const dt = uDt;
+
+  // 呼吸：回家位置随时间极缓地起伏、微转
+  const h0 = homes.element(i).xyz.sub(uCenter);
+  const ph = seed.x.mul(6.2831);
+  const breathe = float(1).add(sin(time.mul(0.55).add(ph.mul(0.15))).mul(0.022)).add(uBreath.mul(0.015));
+  const wob = vec3(
+    sin(time.mul(0.31).add(h0.y.mul(1.3)).add(ph)).mul(0.035),
+    sin(time.mul(0.27).add(h0.z.mul(1.1)).add(ph.mul(1.3))).mul(0.035),
+    sin(time.mul(0.23).add(h0.x.mul(1.2))).mul(0.03)
+  );
+  const home = h0.mul(breathe).add(wob).add(uCenter);
+
+  // 弹簧（欠阻尼）：a = k(home - p) - c v
+  const toHome = home.sub(pos);
+  const acc = toHome.mul(uK).sub(vel.mul(uC)).toVar();
+
+  // 鼠标斥力：只在"搅动"时施加，光标停住即消失
+  const d = pos.sub(uMouse);
+  const dz = vec3(d.x, d.y, d.z.mul(0.35));
+  const dist = length(dz);
+  const fall = clamp(float(1).sub(dist.div(uRadius)), 0, 1);
+  const fall2 = fall.mul(fall);
+  const speedFactor = float(1).add(uSpeedW.mul(uSpeed));
+  const jitter = vec3(seed.y.sub(0.5), seed.z.sub(0.5), seed.w.sub(0.5)).mul(0.9);
+  const dir = normalize(vec3(d.x, d.y, d.z.mul(0.6)).add(jitter.mul(0.35)).add(vec3(0, 0, 0.0001)));
+  const push = dir.mul(fall2.mul(uStrength).mul(uActive).mul(speedFactor));
+  // 甩动时顺着鼠标方向带走一点雾，形成尾迹
+  const drag = uMouseVel.mul(fall2.mul(uActive).mul(2.2));
+  acc.addAssign(push.add(drag));
+
+  // 烟雾感：偏离越远，越受一层缓慢流场扰动；回家路上旋转回流 + 流沙式下坠
+  const off = length(toHome);
+  const offN = clamp(off.div(float(CLOUD_RADIUS * 0.9)), 0, 1);
+  const tt = time.mul(0.7);
+  const flow = vec3(
+    sin(pos.y.mul(1.9).add(tt).add(ph)),
+    sin(pos.z.mul(1.6).add(tt.mul(1.13)).add(ph.mul(0.7))),
+    sin(pos.x.mul(1.7).add(tt.mul(0.91)))
+  ).mul(offN.mul(3.2));
+  const swirl = vec3(toHome.y.negate(), toHome.x, 0).mul(offN.mul(1.6).mul(seed.x.sub(0.35)));
+  const sink = vec3(0, offN.mul(-1.4), 0);
+  acc.addAssign(flow.add(swirl).add(sink));
+
+  const v = vel.add(acc.mul(dt)).mul(0.992).toVar();
+  V.assign(vec4(v, offN));
+  P.assign(vec4(pos.add(v.mul(dt)), seed.x));
+})().compute(COUNT);
+
+// ───────────────────────── 背景：洞窟（静态，CPU 烘一次成贴图，省下每帧的噪声开销） ─────────────────────────
+{
+  // 小巧的值噪声 + fbm
+  const P = new Uint8Array(512); { const p = [...Array(256).keys()]; for (let i = 255; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [p[i], p[j]] = [p[j], p[i]]; } for (let i = 0; i < 512; i++) P[i] = p[i & 255]; }
+  const V = new Float32Array(256).map(() => Math.random() * 2 - 1);
+  const sm = t => t * t * (3 - 2 * t);
+  const vn = (x, y) => { const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, X = xi & 255, Y = yi & 255;
+    const a = V[P[P[X] + Y]], b = V[P[P[X + 1] + Y]], c = V[P[P[X] + Y + 1]], d = V[P[P[X + 1] + Y + 1]], u = sm(xf), v = sm(yf);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v; };
+  const fbm = (x, y, o) => { let s = 0, f = 1, w = 0.5; for (let i = 0; i < o; i++) { s += vn(x * f, y * f) * w; f *= 2; w *= 0.5; } return s; };
+  const toS = l => Math.round(255 * (l <= 0.0031308 ? 12.92 * l : 1.055 * Math.pow(l, 1 / 2.4) - 0.055));
+  const ss = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+
+  const cvs = document.createElement('canvas');
+  const tex = new THREE.CanvasTexture(cvs);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.MeshBasicMaterial({ map: tex, depthWrite: false });
+  const bg = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  bg.position.set(0, 0.15, -9);
+  bg.renderOrder = -10;
+  bg.name = 'bg'; if (!qs.has('nobg')) scene.add(bg);
+
+  const bake = (wWorld, hWorld) => {
+    const W = Math.min(640, Math.round(innerWidth / 2)), H = Math.max(2, Math.round(W * hWorld / wWorld));
+    cvs.width = W; cvs.height = H;
+    const g = cvs.getContext('2d'); const img = g.createImageData(W, H); const d = img.data;
+    const unit = CLOUD_RADIUS * 2.2;
+    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+      // 与云团平面同尺度的坐标，横竖屏洞口形状一致
+      const px = (i / W - 0.5) * wWorld / unit, py = (0.5 - j / H) * hWorld / unit;
+      const qx = px, qy = (py - 0.2) * 1.25, r = Math.hypot(qx, qy);
+      const n = fbm(px * 2.2 + 11, py * 2.2 + 7, 5), n2 = fbm(px * 7 + 3, py * 7 + 5, 3);
+      const edge = 0.95 + n * 0.36;
+      const rock = ss(edge - 0.04, edge + 0.16, r);
+      const rockTex = 0.003 + n2 * 0.0036 + n * 0.003;
+      const rim = ss(edge - 0.02, edge + 0.03, r) * ss(edge + 0.22, edge + 0.03, r) * 0.0035;
+      const deep = ss(0, 0.55, r) * 0.4 + 0.6;
+      const warm = Math.exp(-Math.hypot(px + 1.1, py + 0.9) * 3.6) * 0.012;
+      const base = [0.0006, 0.0007, 0.0009], tint = [0.95, 0.97, 1.0], wc = [0.9, 0.55, 0.28];
+      const k = (j * W + i) * 4;
+      for (let c = 0; c < 3; c++) d[k + c] = toS(Math.max(0, ((base[c] + (rockTex * tint[c] - base[c]) * rock + rim) * deep + wc[c] * warm)));
+      d[k + 3] = 255;
+    }
+    g.putImageData(img, 0, 0);
+    tex.needsUpdate = true;
+  };
+  let lastKey = '';
+  const fit = () => {
+    const dist = camera.position.z + 9;
+    const h = 2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * 1.08;
+    bg.scale.set(h * camera.aspect, h, 1);
+    const k = camera.position.z / dist;               // 换算回云团平面的尺度
+    const key = Math.round(camera.aspect * 50);
+    if (key !== lastKey) { lastKey = key; bake(h * camera.aspect * k, h * k); }
+  };
+  fit();
+  let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(fit, 150); });
+}
+
+// ───────────────────────── 城影：恶罗海城的记忆残影 ─────────────────────────
+{
+  const c = document.createElement('canvas');
+  c.width = 1024; c.height = 512;
+  const g = c.getContext('2d');
+  g.strokeStyle = 'rgba(255,255,255,1)';
+  g.lineCap = 'round';
+  const base = 380;
+  // 城墙
+  g.lineWidth = 2;
+  g.beginPath(); g.moveTo(60, base); g.lineTo(964, base); g.stroke();
+  g.lineWidth = 1.2;
+  g.beginPath(); g.moveTo(110, base - 46); g.lineTo(914, base - 46); g.stroke();
+  // 塔楼：几道竖线 + 尖顶
+  const towers = [[150, 120], [228, 70], [300, 160], [372, 95], [450, 230], [512, 300], [574, 210], [648, 110], [722, 175], [796, 80], [870, 130]];
+  for (const [x, hgt] of towers) {
+    const w = 10 + (hgt / 300) * 16;
+    g.lineWidth = 1.4;
+    g.beginPath();
+    g.moveTo(x - w, base - 46); g.lineTo(x - w, base - 46 - hgt);
+    g.lineTo(x, base - 46 - hgt - w * 1.6);
+    g.lineTo(x + w, base - 46 - hgt); g.lineTo(x + w, base - 46);
+    g.stroke();
+    g.lineWidth = 0.8;
+    g.beginPath(); g.moveTo(x, base - 46); g.lineTo(x, base - 46 - hgt * 0.9); g.stroke();
+  }
+  // 台阶状底座
+  g.lineWidth = 1;
+  for (let k = 1; k <= 3; k++) { g.beginPath(); g.moveTo(60 - k * 18, base + k * 22); g.lineTo(964 + k * 18, base + k * 22); g.stroke(); }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  mat.colorNode = Fn(() => {
+    const t = texture(tex, uv());
+    // 记忆残影：竖向渐隐 + 轻微闪烁的扫描感
+    const fadeY = smoothstep(0.0, 0.35, uv().y).mul(smoothstep(1.0, 0.55, uv().y));
+    const flick = float(0.85).add(sin(time.mul(1.3).add(uv().y.mul(40))).mul(0.06));
+    const a = t.r.mul(fadeY).mul(flick).mul(uCity).mul(0.17);
+    return vec4(vec3(0.82, 0.74, 0.6).mul(a), a);
+  })();
+  const city = new THREE.Mesh(new THREE.PlaneGeometry(CLOUD_RADIUS * 3.1, CLOUD_RADIUS * 1.55), mat);
+  city.position.set(0, CLOUD_CENTER.y + 0.15, -3.2);
+  city.renderOrder = -6;
+  city.name = 'city'; scene.add(city);
+}
+
+// ───────────────────────── 眼睛：无界妖瞳 ─────────────────────────
+{
+  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
+  const eyeFn = Fn(() => {
+    const p = uv().sub(0.5).mul(vec2(2.0, 1.0)).toVar();  // x ∈ [-1,1], y ∈ [-0.5,0.5]
+    const open = uEyeOpen;
+    // 杏仁形眼睑
+    const xx = clamp(abs(p.x), 0, 1);
+    const lid = pow(float(1).sub(xx.mul(xx)), 0.85).mul(open).mul(0.44);
+    const lidMask = smoothstep(lid.add(0.006), lid.sub(0.018), abs(p.y.sub(p.x.mul(0.04))));
+    const inEye = lidMask.mul(smoothstep(1.0, 0.94, xx));
+
+    // 虹膜 / 瞳孔，瞳孔跟随鼠标
+    const ic = uPupil.mul(vec2(0.16, 0.07));
+    const q = p.sub(ic);
+    const ir = length(q);
+    const IR = float(0.37);
+    const ang = atan(q.y, q.x);
+    const fib = sin(ang.mul(46).add(sin(ang.mul(7)).mul(2.0))).mul(0.5).add(0.5);
+    const fib2 = sin(ang.mul(19).add(ir.mul(30))).mul(0.5).add(0.5);
+    const radial = ir.div(IR);
+    const amber = mix(vec3(0.78, 0.48, 0.16), vec3(0.22, 0.1, 0.03), smoothstep(0.25, 1.0, radial));
+    const irisCol = amber.mul(float(0.55).add(fib.mul(0.3)).add(fib2.mul(0.15)))
+      .add(vec3(0.9, 0.62, 0.28).mul(smoothstep(0.42, 0.22, radial).mul(smoothstep(0.12, 0.25, radial)).mul(0.22)));
+    const limbal = smoothstep(0.72, 1.0, radial).mul(0.75);
+    const irisMask = smoothstep(IR.add(0.01), IR.sub(0.01), ir);
+    // 竖长蛇瞳，眼睁得越大瞳孔越细（被光刺到）
+    const pw = mix(float(0.085), float(0.05), uEyeGlow);
+    const pupilD = length(vec2(q.x.div(pw), q.y.div(0.31)));
+    const pupilMask = smoothstep(1.05, 0.9, pupilD);
+
+    // 压暗的眼白：泛灰、边缘沉入黑暗
+    const scl = vec3(0.016, 0.014, 0.012).mul(smoothstep(1.0, 0.2, length(p.mul(vec2(1.0, 1.8)))));
+    let col = mix(scl, irisCol.mul(float(1).sub(limbal)), irisMask);
+    col = mix(col, vec3(0.004, 0.003, 0.002), pupilMask);
+    // 上眼睑投影
+    const shadow = smoothstep(lid.mul(-0.2), lid, p.y).mul(0.45);
+    col = col.mul(float(1).sub(shadow));
+    const bright = float(0.25).add(uEyeGlow.mul(0.75));
+    col = col.mul(bright);
+    // 眼周极淡的琥珀辉光（在眼睑外）
+    const glow = exp(length(p.mul(vec2(0.9, 2.2))).mul(-3.0)).mul(uEyeGlow).mul(0.10).mul(smoothstep(0.02, 0.2, open));
+    const a = clamp(inEye.add(glow.mul(1.2)), 0, 1);
+    return vec4(col.mul(inEye).add(vec3(0.85, 0.5, 0.18).mul(glow)), a);
+  });
+  mat.colorNode = eyeFn();
+  const eye = new THREE.Mesh(new THREE.PlaneGeometry(CLOUD_RADIUS * 0.95, CLOUD_RADIUS * 0.475), mat);
+  eye.position.set(0, CLOUD_CENTER.y, -1.1);
+  eye.renderOrder = -4;
+  eye.name = 'eye'; scene.add(eye);
+}
+
+
+// ───────────────────────── 雾团的体积辉光（散开时变淡） ─────────────────────────
+{
+  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  mat.colorNode = Fn(() => {
+    const p = uv().sub(0.5).mul(2);
+    const r = length(p.mul(vec2(1.0, 1.08)));
+    const g = exp(r.mul(r).mul(-3.2)).mul(float(1).add(sin(p.x.mul(3.1).add(time.mul(0.11))).mul(sin(p.y.mul(2.7).sub(time.mul(0.09)))).mul(0.18)));
+    const a = g.mul(uHaze).mul(0.11);
+    return vec4(vec3(0.72, 0.77, 0.86).mul(a), a);
+  })();
+  const haze = new THREE.Mesh(new THREE.PlaneGeometry(CLOUD_RADIUS * 3.0, CLOUD_RADIUS * 3.0), mat);
+  haze.position.set(0, CLOUD_CENTER.y, 0.3);
+  haze.renderOrder = -2;
+  haze.name = 'haze'; if (!qs.has('nobg')) scene.add(haze);
+}
+
+// ───────────────────────── 粒子渲染 ─────────────────────────
+{
+  const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const PA = positions.toAttribute();
+  const VA = velocities.toAttribute();
+  mat.positionNode = PA.xyz;
+  const s0 = PA.w;
+  const seedA = vec3(s0, fract(s0.mul(17.31)), fract(s0.mul(91.7)));
+  const dispA = VA.w;
+  mat.scaleNode = float(0.045).add(seedA.x.mul(seedA.x).mul(0.09)).mul(float(1).add(dispA.mul(0.6)));
+  mat.colorNode = Fn(() => {
+    const d = length(uv().sub(0.5)).mul(2);
+    const soft = pow(clamp(float(1).sub(d), 0, 1), 2.2);
+    const cold = mix(vec3(0.74, 0.79, 0.88), vec3(0.9, 0.92, 0.96), seedA.y);
+    // 散开的雾更淡更冷，像烟
+    const a = soft.mul(mix(float(0.075), float(0.05), dispA)).mul(float(0.7).add(seedA.z.mul(0.6)));
+    return vec4(cold.mul(a), a);
+  })();
+  var pts = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  pts.count = COUNT;
+  pts.frustumCulled = false;
+  pts.renderOrder = 0;
+  pts.name = 'pts'; scene.add(pts);
+}
+
+// ───────────────────────── 蛇形雾气（一掠而过，可有可无） ─────────────────────────
+const SNAKE_N = isMobile ? 260 : 520;
+{
+  const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  // 给它一个真正的实例属性（纯 instanceIndex 的空实例网格在部分 WebGL2 驱动上会让整帧画不出来）
+  const tArr = new Float32Array(SNAKE_N * 2);
+  for (let i = 0; i < SNAKE_N; i++) { tArr[i * 2] = i / SNAKE_N; tArr[i * 2 + 1] = Math.random(); }
+  const snakeData = instancedArray(tArr, 'vec2').toAttribute();
+  const tParam = snakeData.x;
+  mat.positionNode = Fn(() => {
+    const s = uSnakeT.sub(tParam.mul(0.35));        // 头在前、尾在后
+    const x = mix(float(-7.5), float(7.5), s);
+    const y = float(-1.9).add(sin(s.mul(18.0)).mul(0.28)).add(sin(s.mul(5.0)).mul(0.2));
+    const h = snakeData.y;
+    return vec3(x.add(h.mul(0.12)), y.add(fract(h.mul(37.7)).sub(0.5).mul(0.12)), float(-1.5));
+  })();
+  mat.scaleNode = float(0.05).mul(float(1).sub(tParam.mul(0.7)));
+  mat.colorNode = Fn(() => {
+    const d = length(uv().sub(0.5)).mul(2);
+    const soft = pow(clamp(float(1).sub(d), 0, 1), 2.0);
+    const a = soft.mul(uSnake).mul(0.06).mul(float(1).sub(tParam));
+    return vec4(vec3(0.7, 0.74, 0.8).mul(a), a);
+  })();
+  const snake = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  snake.count = SNAKE_N;
+  snake.frustumCulled = false;
+  snake.renderOrder = 1;
+  snake.name = 'snake'; snake.visible = false; scene.add(snake);
+  window.__snakeMesh = snake;
+}
+
+// ───────────────────────── 输入：鼠标 / 触屏 ─────────────────────────
+const ndc = new THREE.Vector2();
+const ray = new THREE.Raycaster();
+const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const rawWorld = new THREE.Vector3(99, 99, 0);
+const smoothWorld = new THREE.Vector3(99, 99, 0);
+const prevSmooth = new THREE.Vector3(99, 99, 0);
+let pointerIn = false, lastMoveT = -10, firstTouch = true, rawSpeed = 0;
+const hint = document.getElementById('hint');
+
+function toWorld(cx, cy) {
+  ndc.set(cx / innerWidth * 2 - 1, -(cy / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  ray.ray.intersectPlane(plane, rawWorld);
+}
+let prevRaw = null, prevT = 0;
+function onMove(cx, cy) {
+  toWorld(cx, cy);
+  const now = performance.now() / 1000;
+  if (!pointerIn || !prevRaw) {
+    smoothWorld.copy(rawWorld); prevSmooth.copy(rawWorld);
+    prevRaw = rawWorld.clone(); prevT = now; pointerIn = true; return;
+  }
+  const dtm = Math.max(now - prevT, 1 / 240);
+  const sp = rawWorld.distanceTo(prevRaw) / dtm;
+  rawSpeed = Math.max(rawSpeed, sp);
+  if (sp > 0.02) lastMoveT = now;
+  prevRaw.copy(rawWorld); prevT = now;
+  if (firstTouch) { firstTouch = false; setTimeout(() => hint.classList.add('gone'), 2500); }
+}
+function onLeave() { pointerIn = false; prevRaw = null; }
+
+canvas.addEventListener('pointermove', e => onMove(e.clientX, e.clientY));
+canvas.addEventListener('pointerdown', e => { onMove(e.clientX, e.clientY); });
+canvas.addEventListener('pointerleave', onLeave);
+canvas.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') onLeave(); });
+canvas.addEventListener('pointercancel', onLeave);
+canvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+
+// ───────────────────────── 滑杆面板 ─────────────────────────
+const slidersEl = document.getElementById('sliders');
+const toggle = document.getElementById('toggle');
+const inputs = {};
+for (const s of SLIDERS) {
+  const row = document.createElement('div'); row.className = 'row';
+  const lab = document.createElement('label');
+  const val = document.createElement('span');
+  lab.textContent = s.label; lab.appendChild(val);
+  const inp = document.createElement('input');
+  Object.assign(inp, { type: 'range', min: s.min, max: s.max, step: s.step, value: params[s.key] });
+  const show = () => { val.textContent = (+inp.value).toFixed(s.step < 0.1 ? 2 : s.step < 1 ? 1 : 0); };
+  inp.addEventListener('input', () => { params[s.key] = +inp.value; show(); applyParams(); });
+  show();
+  row.append(lab, inp); slidersEl.appendChild(row);
+  inputs[s.key] = { inp, show };
+}
+const reset = document.createElement('button'); reset.id = 'reset'; reset.textContent = '恢复默认';
+reset.onclick = () => { Object.assign(params, DEFAULTS); for (const k in inputs) { inputs[k].inp.value = params[k]; inputs[k].show(); } applyParams(); };
+slidersEl.appendChild(reset);
+toggle.onclick = () => { const h = slidersEl.classList.toggle('hidden'); toggle.textContent = h ? '手感 ▾' : '手感 ▴'; };
+function applyParams() {
+  uK.value = params.stiffness; uC.value = params.damping;
+  uRadius.value = params.radius * CLOUD_RADIUS;
+  uStrength.value = params.strength; uSpeedW.value = params.speedWeight;
+}
+applyParams();
+
+// ───────────────────────── 散开程度 → 揭示 ─────────────────────────
+// 用光标对云团的"搅动量"在 CPU 上估一个散开程度，避免每帧从 GPU 回读
+let scatter = 0, heavy = 0, eyeOpen = 0, eyeGlow = 0, city = 0;
+let snakeT = -1, snakeCooldown = 0;
+const pupil = new THREE.Vector2();
+const tmp = new THREE.Vector3();
+
+const bootT = performance.now(); let fpsN = 0, fpsT0 = bootT;
+let last = performance.now(), __fps = 60, perfN = 0, perfT = 0, perfChecks = 0, degraded = false;
+function tick() {
+  const now = performance.now();
+  const rawDt = (now - last) / 1000;
+  let dt = Math.min(rawDt, 1 / 20);
+  last = now;
+  const t = now / 1000;
+
+  // 自测钩子：按模拟时间回放一段指针轨迹（与帧率无关），只给截图验收用
+  const A = window.__auto;
+  if (A && !A.done) {
+    A.t = (A.t || 0) + dt; const u = Math.min(A.t / A.dur, 1);
+    const [x, y] = A.f(u); lastMoveT = -10; onMove(x, y); onMove(x, y);
+    if (A.t - dt > 0) { rawSpeed = Math.max(rawSpeed, A.speed || 6); lastMoveT = t; }
+    if (u >= 1) { A.done = true; }
+  }
+  if (window.__autoLeave) { window.__autoLeave = false; onLeave(); }
+  if (window.__simClock !== undefined) window.__simClock += dt;
+  // 鼠标平滑（不用原始位置，避免抖动）
+  if (pointerIn) smoothWorld.lerp(rawWorld, 1 - Math.exp(-dt * 22));
+  const mv = tmp.copy(smoothWorld).sub(prevSmooth).divideScalar(Math.max(dt, 1e-4));
+  prevSmooth.copy(smoothWorld);
+  const moving = pointerIn && (t - lastMoveT) < 0.12;
+  const active = uActive.value;
+  uActive.value = moving ? Math.min(1, active + dt * 14) : Math.max(0, active - dt * 9);
+  const speedN = Math.min(rawSpeed / 9, 2.2);
+  uSpeed.value += (speedN - uSpeed.value) * (1 - Math.exp(-dt * 12));
+  rawSpeed *= Math.exp(-dt * 10);
+  uMouse.value.copy(pointerIn ? smoothWorld : new THREE.Vector3(99, 99, 0));
+  uMouseVel.value.copy(mv).clampLength(0, 14).multiplyScalar(uActive.value);
+  uDt.value = dt;
+
+  // 散开程度估计
+  const dC = pointerIn ? Math.hypot(smoothWorld.x - CLOUD_CENTER.x, smoothWorld.y - CLOUD_CENTER.y) : 99;
+  const near = THREE.MathUtils.clamp(1 - (dC - params.radius * CLOUD_RADIUS * 0.3) / (CLOUD_RADIUS * 1.15), 0, 1);
+  const core = THREE.MathUtils.clamp(1 - dC / (CLOUD_RADIUS * 0.75), 0, 1);
+  const power = THREE.MathUtils.clamp(params.strength / 55, 0, 2) * THREE.MathUtils.clamp(params.radius / 0.8, 0.4, 1.6);
+  const stir = uActive.value * near * (0.55 + 0.45 * Math.min(1, uSpeed.value * (0.5 + 0.5 * params.speedWeight))) * Math.min(1.4, power);
+  const kRel = Math.sqrt(params.stiffness / DEFAULTS.stiffness);
+  if (stir > scatter) scatter += (stir - scatter) * (1 - Math.exp(-dt * 3.2));
+  else scatter += (stir - scatter) * (1 - Math.exp(-dt * 0.9 * kRel));
+  // 重度：光标在云团中心附近持续搅动才累积；一松手迅速消退（城影先散）
+  const deepStir = uActive.value * core * Math.min(1, power);
+  if (deepStir > 0.35 && scatter > 0.45) heavy = Math.min(1, heavy + dt * 0.55);
+  else heavy = Math.max(0, heavy - dt * 1.3);
+
+  // 眼睛：轻度散开即开始睁，越散越大越亮
+  const openT = THREE.MathUtils.smoothstep(scatter, 0.05, 0.5) * 0.72 + heavy * 0.28;
+  eyeOpen += (openT - eyeOpen) * (1 - Math.exp(-dt * (openT > eyeOpen ? 3.0 : 2.2)));
+  const glowT = THREE.MathUtils.clamp(openT * 0.45 + heavy * 0.6, 0, 1);
+  eyeGlow += (glowT - eyeGlow) * (1 - Math.exp(-dt * 2.5));
+  const cityT = THREE.MathUtils.smoothstep(heavy, 0.35, 1.0) * THREE.MathUtils.smoothstep(scatter, 0.4, 0.7);
+  city += (cityT - city) * (1 - Math.exp(-dt * (cityT > city ? 1.2 : 4.0)));
+  // 瞳孔追鼠标（缓慢、有迟滞）
+  const tx = pointerIn ? THREE.MathUtils.clamp((smoothWorld.x - CLOUD_CENTER.x) / (CLOUD_RADIUS * 1.4), -1, 1) : 0;
+  const ty = pointerIn ? THREE.MathUtils.clamp((smoothWorld.y - CLOUD_CENTER.y) / (CLOUD_RADIUS * 1.2), -1, 1) : 0;
+  pupil.x += (tx - pupil.x) * (1 - Math.exp(-dt * 2.4));
+  pupil.y += (ty - pupil.y) * (1 - Math.exp(-dt * 2.4));
+
+  uEyeOpen.value = eyeOpen; uEyeGlow.value = eyeGlow; uPupil.value.copy(pupil); uCity.value = city;
+  uBreath.value = Math.sin(t * 0.4);
+  uHaze.value = 1 - THREE.MathUtils.clamp(scatter * 1.1, 0, 0.9);
+
+  // 蛇形雾气：眼睛睁到最大时偶尔掠过一次
+  snakeCooldown -= dt;
+  if (snakeT < 0 && eyeOpen > 0.9 && heavy > 0.85 && snakeCooldown <= 0) { snakeT = 0; snakeCooldown = 14; }
+  if (snakeT >= 0) {
+    snakeT += dt * 0.16;
+    uSnake.value = Math.sin(Math.min(snakeT / 1.35, 1) * Math.PI);
+    window.__snakeMesh.visible = !qs.get('hide')?.includes('snake');
+    uSnakeT.value = snakeT;
+    if (snakeT > 1.35) { snakeT = -1; uSnake.value = 0; window.__snakeMesh.visible = false; }
+  }
+
+  if (!qs.has('nocomp')) renderer.compute(computeUpdate);
+  renderer.render(scene, camera);
+
+  // 自适应降档：前几秒平均帧率太低，就少画一半粒子、像素比降到 1
+  if (now - bootT > 2500) { perfN++; perfT += rawDt; }  // 跳过开头编译着色器的卡顿
+  if (!degraded && perfT > 3) {
+    if (perfN / perfT < 32) { degraded = true; pts.count = Math.floor(COUNT / 2); renderer.setPixelRatio(1); renderer.setSize(innerWidth, innerHeight, false); }
+    perfN = 0; perfT = 0; if (!degraded && ++perfChecks > 2) degraded = 'ok';
+  }
+  fpsN++; if (now - fpsT0 > 1000) { __fps = fpsN * 1000 / (now - fpsT0); fpsN = 0; fpsT0 = now; }
+  window.__xushu = { fps: Math.round(__fps), degraded, drawn: pts.count, scatter, heavy, eyeOpen, city, active: uActive.value, backend: renderer.backend.isWebGPUBackend ? 'webgpu' : 'webgl2', count: COUNT };
+}
+for (const h of (qs.get('hide') || '').split(',').filter(Boolean)) { const o = scene.getObjectByName(h); if (o && o !== scene) o.visible = false; }
+renderer.setAnimationLoop(tick);
+</script>
+</body>
+</html>
