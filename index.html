@@ -5,36 +5,38 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>虚数空间</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #020203; overflow: hidden; overscroll-behavior: none; }
-  body { font-family: "PingFang SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; color: #b9bcc2; -webkit-font-smoothing: antialiased; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; }
+  body { font-family: "PingFang SC", "Noto Sans SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; color: #b9bec6; -webkit-font-smoothing: antialiased; }
   canvas#stage { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; cursor: crosshair; }
-  .title { position: fixed; left: 50%; bottom: calc(26px + env(safe-area-inset-bottom)); transform: translateX(-50%); text-align: center; pointer-events: none; user-select: none; }
-  .title h1 { margin: 0; font-weight: 300; font-size: 15px; letter-spacing: .6em; text-indent: .6em; color: rgba(200,204,212,.55); }
-  .title p { margin: 8px 0 0; font-weight: 300; font-size: 12px; letter-spacing: .25em; text-indent: .25em; color: rgba(170,174,182,.35); transition: opacity 2s; }
+  .title { position: fixed; left: 50%; bottom: calc(26px + env(safe-area-inset-bottom)); transform: translateX(-50%); text-align: center; pointer-events: none; user-select: none; white-space: nowrap; }
+  .title h1 { margin: 0; font-weight: 300; font-size: 15px; letter-spacing: .6em; text-indent: .6em; color: rgba(196,206,218,.5); }
+  .title p { margin: 8px 0 0; font-weight: 300; font-size: 12px; letter-spacing: .25em; text-indent: .25em; color: rgba(166,176,190,.32); transition: opacity 2s; }
   .title p.gone { opacity: 0; }
+  #perf { position: fixed; left: calc(12px + env(safe-area-inset-left)); bottom: calc(10px + env(safe-area-inset-bottom)); font: 10px/1 ui-monospace, Menlo, monospace; color: rgba(160,175,195,.22); pointer-events: none; letter-spacing: .05em; }
   #panel { position: fixed; right: calc(14px + env(safe-area-inset-right)); top: calc(14px + env(safe-area-inset-top)); z-index: 3; font-size: 11px; letter-spacing: .08em; }
-  #toggle { all: unset; cursor: pointer; display: block; margin-left: auto; padding: 6px 10px; color: rgba(190,194,202,.5); border: 1px solid rgba(190,194,202,.12); border-radius: 3px; background: rgba(8,9,11,.35); }
-  #toggle:hover { color: rgba(220,224,232,.8); }
-  #sliders { margin-top: 8px; width: 210px; max-width: calc(100vw - 28px); padding: 12px 14px 6px; box-sizing: border-box; background: rgba(8,9,12,.62); border: 1px solid rgba(190,194,202,.1); border-radius: 4px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  #toggle { all: unset; cursor: pointer; display: block; margin-left: auto; padding: 6px 10px; color: rgba(190,200,212,.5); border: 1px solid rgba(190,200,212,.12); border-radius: 3px; background: rgba(6,8,11,.35); }
+  #toggle:hover { color: rgba(220,228,238,.8); }
+  #sliders { margin-top: 8px; width: 210px; max-width: calc(100vw - 28px); padding: 12px 14px 6px; box-sizing: border-box; background: rgba(6,8,12,.62); border: 1px solid rgba(190,200,212,.1); border-radius: 4px; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
   #sliders.hidden { display: none; }
   .row { margin-bottom: 10px; }
-  .row label { display: flex; justify-content: space-between; color: rgba(190,194,202,.62); margin-bottom: 4px; }
-  .row label span { color: rgba(214,170,110,.6); font-variant-numeric: tabular-nums; }
+  .row label { display: flex; justify-content: space-between; color: rgba(190,200,212,.62); margin-bottom: 4px; }
+  .row label span { color: rgba(150,200,225,.6); font-variant-numeric: tabular-nums; }
   input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 14px; background: transparent; margin: 0; }
-  input[type=range]::-webkit-slider-runnable-track { height: 1px; background: rgba(190,194,202,.22); }
-  input[type=range]::-moz-range-track { height: 1px; background: rgba(190,194,202,.22); }
-  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 9px; height: 9px; margin-top: -4px; border-radius: 50%; background: #c9ccd2; }
-  input[type=range]::-moz-range-thumb { width: 9px; height: 9px; border: 0; border-radius: 50%; background: #c9ccd2; }
-  #reset { all: unset; cursor: pointer; display: block; margin: 2px 0 6px; color: rgba(190,194,202,.4); font-size: 10px; }
-  #reset:hover { color: rgba(220,224,232,.75); }
-  #err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 24px; color: rgba(190,194,202,.6); font-size: 13px; line-height: 1.8; }
+  input[type=range]::-webkit-slider-runnable-track { height: 1px; background: rgba(190,200,212,.22); }
+  input[type=range]::-moz-range-track { height: 1px; background: rgba(190,200,212,.22); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 9px; height: 9px; margin-top: -4px; border-radius: 50%; background: #c6d0dc; }
+  input[type=range]::-moz-range-thumb { width: 9px; height: 9px; border: 0; border-radius: 50%; background: #c6d0dc; }
+  #reset { all: unset; cursor: pointer; display: block; margin: 2px 0 6px; color: rgba(190,200,212,.4); font-size: 10px; }
+  #reset:hover { color: rgba(220,228,238,.75); }
+  #err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 24px; color: rgba(190,200,212,.6); font-size: 13px; line-height: 1.8; }
 </style>
 <script type="importmap">
 {
   "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
     "three/webgpu": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.webgpu.js",
-    "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js"
+    "three/tsl": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.tsl.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
   }
 }
 </script>
@@ -42,6 +44,7 @@
 <body>
 <canvas id="stage"></canvas>
 <div class="title"><h1>虚数空间</h1><p id="hint">拨开雾，往洞底看一眼</p></div>
+<div id="perf"></div>
 <div id="panel">
   <button id="toggle">手感 ▾</button>
   <div id="sliders" class="hidden"></div>
@@ -51,16 +54,25 @@
 <script type="module">
 import * as THREE from 'three/webgpu';
 import {
-  Fn, If, instancedArray, instanceIndex, uniform, float, vec2, vec3, vec4,
+  Fn, instancedArray, instanceIndex, uniform, float, vec2, vec3, vec4,
   uv, length, normalize, max, min, clamp, mix, smoothstep, sin, cos, atan, abs, pow,
-  exp, fract, hash, time, texture
+  exp, fract, hash, time, texture, pass
 } from 'three/tsl';
+import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 
 // ───────────────────────── 可改常量 ─────────────────────────
 const PARTICLES_DESKTOP = 42000;   // 桌面粒子数
-const PARTICLES_MOBILE  = 16000;   // 手机自动降一档
+const PARTICLES_MOBILE  = 16000;   // 手机自动降一档（深度分层和地面雾照样保留）
 const CLOUD_RADIUS = 2.2;          // 云团半径（世界单位）
-const CLOUD_CENTER = new THREE.Vector3(0, 0.55, 0); // 画面中央偏上
+const CLOUD_CENTER = new THREE.Vector3(0, 0, 0);       // 云团略下移，坐在地雾上
+const GROUND_Y = -CLOUD_RADIUS * 1.18;                  // 地面高度
+const MOUTH = new THREE.Vector2(0, 0.85);               // 洞口在云团后上方
+const EYE_POS = new THREE.Vector3(0, 0.12, -1.7);       // 妖瞳：藏在云团后面
+const EYE_R = 0.82;
+
+// 深度分层的量化比例（近 / 远）：大小约 2.5 倍、亮度约 3.3 倍
+const DEPTH_SIZE = [0.5, 1.25];
+const DEPTH_BRIGHT = [0.33, 1.1];
 
 const DEFAULTS = {
   stiffness: 9,      // 回弹刚度
@@ -80,6 +92,7 @@ const SLIDERS = [
 const isMobile = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 600;
 const qs = new URLSearchParams(location.search);
 const COUNT = +qs.get('n') || (isMobile ? PARTICLES_MOBILE : PARTICLES_DESKTOP); // 也可用 ?n=20000 临时改
+const GROUND_N = isMobile ? 900 : 1800;
 const params = { ...DEFAULTS };
 
 // ───────────────────────── 渲染器 / 相机 ─────────────────────────
@@ -87,7 +100,9 @@ const canvas = document.getElementById('stage');
 const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, alpha: false, forceWebGL: qs.has('webgl') });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight, false);
-renderer.setClearColor(0x020203, 1);
+renderer.setClearColor(0x000000, 1);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
 try { await renderer.init(); }
 catch (e) {
   const el = document.getElementById('err');
@@ -97,31 +112,35 @@ catch (e) {
 }
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 100);
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 120);
+const CAM_TARGET = new THREE.Vector3(0, -0.35, 0);
+const camBase = new THREE.Vector3();
 
 function frame() {
   const aspect = innerWidth / innerHeight;
   camera.aspect = aspect;
-  // 让云团在竖屏下也完整：按宽和高中更紧的一边取距离
   const vFov = THREE.MathUtils.degToRad(camera.fov);
-  const needH = CLOUD_RADIUS * 3.4;                  // 竖向要容纳的高度
-  const needW = CLOUD_RADIUS * 2.9;                  // 横向要容纳的宽度
+  const needH = CLOUD_RADIUS * 3.7;   // 云团 + 地面
+  const needW = CLOUD_RADIUS * 2.9;
   const dH = needH / 2 / Math.tan(vFov / 2);
   const dW = needW / 2 / Math.tan(vFov / 2) / aspect;
-  camera.position.set(0, 0.15, Math.max(dH, dW));
-  camera.lookAt(0, 0.15, 0);
+  const d = Math.max(dH, dW);
+  camBase.set(0, 0.55, d);
+  camera.position.copy(camBase);
+  camera.lookAt(CAM_TARGET);
   camera.updateProjectionMatrix();
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, degraded === true ? 1 : 2));
   renderer.setSize(innerWidth, innerHeight, false);
 }
+let degraded = false;
 frame();
-addEventListener('resize', frame);
+addEventListener('resize', () => { frame(); fitLayers(); });
 
 // ───────────────────────── uniforms ─────────────────────────
 const uMouse     = uniform(new THREE.Vector3(99, 99, 0));
 const uMouseVel  = uniform(new THREE.Vector3());
-const uActive    = uniform(0);     // 鼠标"在搅动"的包络 0..1，停下即衰减
-const uSpeed     = uniform(0);     // 归一化鼠标速度
+const uActive    = uniform(0);
+const uSpeed     = uniform(0);
 const uDt        = uniform(1 / 60);
 const uK         = uniform(params.stiffness);
 const uC         = uniform(params.damping);
@@ -137,27 +156,29 @@ const uSnake     = uniform(0);
 const uSnakeT    = uniform(0);
 const uBreath    = uniform(0);
 const uHaze      = uniform(1);
+const uGlow      = uniform(0.25);   // 雾团对环境的染光（随散开增强）
+const uScatter   = uniform(0);
 
 // ───────────────────────── 粒子数据（GPU） ─────────────────────────
 // WebGL2 回退时 transform feedback 最多 4 路，所以只用 3 个 buffer：home(xyz)+seed(w)、位置、速度(xyz)+偏离度(w)
 const homeArr = new Float32Array(COUNT * 4);
 const posArr  = new Float32Array(COUNT * 4);
 for (let i = 0; i < COUNT; i++) {
-  // 球内分布：中心更密、边缘稀，外层少量游丝
   let x, y, z, l;
   do { x = Math.random() * 2 - 1; y = Math.random() * 2 - 1; z = Math.random() * 2 - 1; l = x * x + y * y + z * z; } while (l > 1 || l < 1e-4);
   const n = Math.sqrt(l);
-  let r = Math.pow(Math.random(), 0.62);                // 近似均匀球体，投影后中心自然更密
+  let r = Math.pow(Math.random(), 0.62);
   if (Math.random() < 0.08) r = 1.0 + Math.random() * 0.25; // 边缘游丝
   r *= CLOUD_RADIUS;
-  homeArr[i * 4]     = posArr[i * 4]     = x / n * r * 1.04 + CLOUD_CENTER.x;
-  homeArr[i * 4 + 1] = posArr[i * 4 + 1] = y / n * r * 0.94 + CLOUD_CENTER.y;
-  homeArr[i * 4 + 2] = posArr[i * 4 + 2] = z / n * r * 0.85 + CLOUD_CENTER.z;
-  homeArr[i * 4 + 3] = posArr[i * 4 + 3] = Math.random();   // 种子
+  // 真球体：z 不再压扁，前后层次靠深度分层读出来
+  homeArr[i * 4]     = posArr[i * 4]     = x / n * r * 1.03 + CLOUD_CENTER.x;
+  homeArr[i * 4 + 1] = posArr[i * 4 + 1] = y / n * r * 0.95 + CLOUD_CENTER.y;
+  homeArr[i * 4 + 2] = posArr[i * 4 + 2] = z / n * r * 1.0 + CLOUD_CENTER.z;
+  homeArr[i * 4 + 3] = posArr[i * 4 + 3] = Math.random();
 }
 const homes      = instancedArray(homeArr, 'vec4');
-const positions  = instancedArray(posArr, 'vec4');   // xyz 位置，w 种子
-const velocities = instancedArray(COUNT, 'vec4');    // xyz 速度，w 偏离回家位置的程度
+const positions  = instancedArray(posArr, 'vec4');
+const velocities = instancedArray(COUNT, 'vec4');
 
 // ───────────────────────── compute：斥力 + 欠阻尼弹簧 ─────────────────────────
 const computeUpdate = Fn(() => {
@@ -216,163 +237,247 @@ const computeUpdate = Fn(() => {
   P.assign(vec4(pos.add(v.mul(dt)), seed.x));
 })().compute(COUNT);
 
-// ───────────────────────── 背景：洞窟（静态，CPU 烘一次成贴图，省下每帧的噪声开销） ─────────────────────────
-{
-  // 小巧的值噪声 + fbm
-  const P = new Uint8Array(512); { const p = [...Array(256).keys()]; for (let i = 255; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [p[i], p[j]] = [p[j], p[i]]; } for (let i = 0; i < 512; i++) P[i] = p[i & 255]; }
-  const V = new Float32Array(256).map(() => Math.random() * 2 - 1);
-  const sm = t => t * t * (3 - 2 * t);
-  const vn = (x, y) => { const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, X = xi & 255, Y = yi & 255;
-    const a = V[P[P[X] + Y]], b = V[P[P[X + 1] + Y]], c = V[P[P[X] + Y + 1]], d = V[P[P[X + 1] + Y + 1]], u = sm(xf), v = sm(yf);
-    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v; };
-  const fbm = (x, y, o) => { let s = 0, f = 1, w = 0.5; for (let i = 0; i < o; i++) { s += vn(x * f, y * f) * w; f *= 2; w *= 0.5; } return s; };
-  const toS = l => Math.round(255 * (l <= 0.0031308 ? 12.92 * l : 1.055 * Math.pow(l, 1 / 2.4) - 0.055));
-  const ss = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+// ───────────────────────── 小工具：值噪声（只在 CPU 上烘贴图用一次） ─────────────────────────
+const PERM = new Uint8Array(512); { const p = [...Array(256).keys()]; for (let i = 255; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [p[i], p[j]] = [p[j], p[i]]; } for (let i = 0; i < 512; i++) PERM[i] = p[i & 255]; }
+const VAL = new Float32Array(256).map(() => Math.random() * 2 - 1);
+const sm3 = t => t * t * (3 - 2 * t);
+const vnoise = (x, y) => { const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, X = xi & 255, Y = yi & 255;
+  const a = VAL[PERM[PERM[X] + Y]], b = VAL[PERM[PERM[X + 1] + Y]], c = VAL[PERM[PERM[X] + Y + 1]], d = VAL[PERM[PERM[X + 1] + Y + 1]], u = sm3(xf), v = sm3(yf);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v; };
+const fbm = (x, y, o) => { let s = 0, f = 1, w = 0.5; for (let i = 0; i < o; i++) { s += vnoise(x * f, y * f) * w; f *= 2.03; w *= 0.5; } return s; };
+const sstep = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
 
+// ───────────────────────── 洞窟：三层岩壁剪影（近亮远黑），相机微动时自然出视差 ─────────────────────────
+// 每层：R 通道 = 岩石遮罩，G 通道 = 靠近洞口边缘的程度（给染光用），B = 岩面纹理
+const LAYERS = [
+  { z: -3.6,  hole: 3.7,  base: 0.0075, rim: 1.0,  seed: 11, rough: 0.34, ox: 0.25 },
+  { z: -7.5,  hole: 3.4,  base: 0.0038, rim: 0.4,  seed: 37, rough: 0.4,  ox: -0.45 },
+  { z: -14.0, hole: 3.1,  base: 0.0016, rim: 0.12, seed: 71, rough: 0.45, ox: 0.6 }
+];
+const layerMeshes = [];
+for (const L of LAYERS) {
   const cvs = document.createElement('canvas');
   const tex = new THREE.CanvasTexture(cvs);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const mat = new THREE.MeshBasicMaterial({ map: tex, depthWrite: false });
-  const bg = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-  bg.position.set(0, 0.15, -9);
-  bg.renderOrder = -10;
-  bg.name = 'bg'; if (!qs.has('nobg')) scene.add(bg);
+  tex.colorSpace = THREE.NoColorSpace;
+  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
+  const base = float(L.base), rimK = float(L.rim);
+  mat.colorNode = Fn(() => {
+    const t = texture(tex, uv());
+    const rockCol = vec3(0.62, 0.7, 0.82).mul(base).mul(float(0.55).add(t.b.mul(0.9)));
+    // 雾团的光漏到洞口皮上：边缘被染亮，散开时更亮
+    const rim = vec3(0.55, 0.72, 0.95).mul(pow(t.g, 3.0)).mul(uGlow).mul(rimK).mul(0.02);
+    return vec4(rockCol.add(rim.mul(t.r)), t.r);
+  })();
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  m.position.z = L.z;
+  m.renderOrder = -20 + layerMeshes.length;  // 远的先画
+  m.userData = { L, cvs, tex, key: '' };
+  m.name = 'rock' + layerMeshes.length;
+  scene.add(m);
+  layerMeshes.push(m);
+}
+layerMeshes.reverse().forEach((m, i) => m.renderOrder = -30 + i);
 
-  const bake = (wWorld, hWorld) => {
-    const W = Math.min(640, Math.round(innerWidth / 2)), H = Math.max(2, Math.round(W * hWorld / wWorld));
-    cvs.width = W; cvs.height = H;
-    const g = cvs.getContext('2d'); const img = g.createImageData(W, H); const d = img.data;
-    const unit = CLOUD_RADIUS * 2.2;
-    for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
-      // 与云团平面同尺度的坐标，横竖屏洞口形状一致
-      const px = (i / W - 0.5) * wWorld / unit, py = (0.5 - j / H) * hWorld / unit;
-      const qx = px, qy = (py - 0.2) * 1.25, r = Math.hypot(qx, qy);
-      const n = fbm(px * 2.2 + 11, py * 2.2 + 7, 5), n2 = fbm(px * 7 + 3, py * 7 + 5, 3);
-      const edge = 0.95 + n * 0.36;
-      const rock = ss(edge - 0.04, edge + 0.16, r);
-      const rockTex = 0.003 + n2 * 0.0036 + n * 0.003;
-      const rim = ss(edge - 0.02, edge + 0.03, r) * ss(edge + 0.22, edge + 0.03, r) * 0.0035;
-      const deep = ss(0, 0.55, r) * 0.4 + 0.6;
-      const warm = Math.exp(-Math.hypot(px + 1.1, py + 0.9) * 3.6) * 0.012;
-      const base = [0.0006, 0.0007, 0.0009], tint = [0.95, 0.97, 1.0], wc = [0.9, 0.55, 0.28];
-      const k = (j * W + i) * 4;
-      for (let c = 0; c < 3; c++) d[k + c] = toS(Math.max(0, ((base[c] + (rockTex * tint[c] - base[c]) * rock + rim) * deep + wc[c] * warm)));
-      d[k + 3] = 255;
-    }
-    g.putImageData(img, 0, 0);
-    tex.needsUpdate = true;
-  };
-  let lastKey = '';
-  const fit = () => {
-    const dist = camera.position.z + 9;
-    const h = 2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * 1.08;
-    bg.scale.set(h * camera.aspect, h, 1);
-    const k = camera.position.z / dist;               // 换算回云团平面的尺度
-    const key = Math.round(camera.aspect * 50);
-    if (key !== lastKey) { lastKey = key; bake(h * camera.aspect * k, h * k); }
-  };
-  fit();
-  let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(fit, 150); });
+function bakeLayer(m, wW, hW) {
+  const { L, cvs, tex } = m.userData;
+  const W = Math.min(isMobile ? 360 : 560, Math.round(innerWidth / 2)), H = Math.max(2, Math.round(W * hW / wW));
+  cvs.width = W; cvs.height = H;
+  const g = cvs.getContext('2d'); const img = g.createImageData(W, H); const d = img.data;
+  const cx = MOUTH.x + L.ox, cy = MOUTH.y;
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+    const x = (i / W - 0.5) * wW + m.position.x, y = (0.5 - j / H) * hW + m.position.y;
+    const qx = (x - cx), qy = (y - cy) * 1.18;
+    const r = Math.hypot(qx, qy), a = Math.atan2(qy, qx);
+    const n = fbm(Math.cos(a) * 1.6 + L.seed, Math.sin(a) * 1.6 + r * 0.25, 5);
+    const edge = L.hole * (1 + n * L.rough);
+    const rock = sstep(edge - 0.05, edge + 0.12, r);
+    const rimProx = 1 - sstep(edge, edge + 1.1, r);
+    const tx = fbm(x * 1.4 + L.seed, y * 1.4, 4) * 0.5 + 0.5;
+    const k = (j * W + i) * 4;
+    d[k] = Math.round(rock * 255); d[k + 1] = Math.round(rimProx * 255); d[k + 2] = Math.round(tx * 255); d[k + 3] = 255;
+  }
+  g.putImageData(img, 0, 0);
+  tex.needsUpdate = true;
+}
+function fitLayers() {
+  const vFov = THREE.MathUtils.degToRad(camera.fov);
+  for (const m of layerMeshes) {
+    const dist = camBase.z - m.position.z;
+    const h = 2 * dist * Math.tan(vFov / 2) * 1.25, w = h * camera.aspect * 1.08;
+    // 跟随相机的取景中心（相机看向 CAM_TARGET，略低）
+    const cy = camBase.y + (CAM_TARGET.y - camBase.y) * (dist / camBase.z);
+    m.position.y = cy;
+    m.scale.set(w, h, 1);
+    const key = Math.round(camera.aspect * 40) + ':' + Math.round(w);
+    if (key !== m.userData.key) { m.userData.key = key; bakeLayer(m, w, h); }
+  }
+}
+fitLayers();
+
+// ───────────────────────── 洞底灭点：一个极小的冷光点 ─────────────────────────
+{
+  const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  mat.colorNode = Fn(() => {
+    const d = length(uv().sub(0.5)).mul(2);
+    const core = pow(clamp(float(1).sub(d), 0, 1), 6.0);
+    const flick = float(0.85).add(sin(time.mul(0.7)).mul(0.15));
+    const a = core.mul(flick).mul(float(0.9).add(uGlow.mul(0.6)));
+    return vec4(vec3(0.75, 0.9, 1.0).mul(a).mul(2.2), a);
+  })();
+  const vp = new THREE.Sprite(mat);
+  vp.position.set(MOUTH.x * 0.6, MOUTH.y * 0.7 - 0.2, -26);
+  vp.scale.setScalar(0.45);
+  vp.renderOrder = -40; vp.name = 'vanish';
+  scene.add(vp);
 }
 
-// ───────────────────────── 城影：恶罗海城的记忆残影 ─────────────────────────
+// ───────────────────────── 地面：被雾团微微照亮的冷黑地面 ─────────────────────────
+{
+  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
+  mat.colorNode = Fn(() => {
+    const p = uv().sub(0.5).mul(vec2(30, 30));       // 世界坐标（x, z）
+    const wz = float(-3).sub(p.y);                    // uv.y 朝 -z，平面中心在 z = -3
+    const dist = length(vec2(p.x.sub(uCenter.x), wz.sub(uCenter.z)));
+    const pool = exp(dist.mul(dist).mul(-0.08)).mul(uGlow).mul(0.018);
+    const far = smoothstep(14.0, 3.0, length(p));
+    const col = vec3(0.004, 0.0048, 0.006).add(vec3(0.5, 0.66, 0.85).mul(pool));
+    return vec4(col, far);
+  })();
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), mat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.set(0, GROUND_Y - 0.05, -3);
+  ground.renderOrder = -12; ground.name = 'ground';
+  scene.add(ground);
+}
+
+// ───────────────────────── 贴地雾：一层慢速漂移的低浓度雾粒 ─────────────────────────
+{
+  const arr = new Float32Array(GROUND_N * 4);
+  for (let i = 0; i < GROUND_N; i++) {
+    arr[i * 4] = (Math.random() * 2 - 1) * 8.5;
+    arr[i * 4 + 1] = Math.random();
+    arr[i * 4 + 2] = -7 + Math.random() * 10.5;
+    arr[i * 4 + 3] = Math.random();
+  }
+  const gd = instancedArray(arr, 'vec4').toAttribute();
+  const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const drift = time.mul(0.06);
+  const gx = gd.x.add(sin(drift.add(gd.w.mul(6.28))).mul(0.9)).add(drift.mul(gd.w.sub(0.5)).mul(2.0));
+  const wrapX = fract(gx.div(17).add(0.5)).sub(0.5).mul(17);
+  const gpos = vec3(wrapX, float(GROUND_Y).add(gd.y.mul(0.55)).add(sin(drift.mul(2.0).add(gd.w.mul(20))).mul(0.06)), gd.z);
+  mat.positionNode = gpos;
+  mat.scaleNode = float(0.7).add(gd.w.mul(1.1));
+  mat.colorNode = Fn(() => {
+    const d = length(uv().sub(0.5)).mul(2);
+    const soft = pow(clamp(float(1).sub(d), 0, 1), 1.6);
+    // 离云团越近越被染亮
+    const toCloud = length(vec2(gpos.x.sub(uCenter.x), gpos.z.sub(uCenter.z)));
+    const lit = float(0.5).add(exp(toCloud.mul(toCloud).mul(-0.09)).mul(float(0.5).add(uGlow)).mul(2.0));
+    const a = soft.mul(0.022).mul(lit).mul(float(1).sub(gd.y.mul(0.5)));
+    return vec4(vec3(0.6, 0.72, 0.86).mul(a), a);
+  })();
+  const gf = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  gf.count = GROUND_N; gf.frustumCulled = false;
+  gf.renderOrder = -11; gf.name = 'groundfog';
+  scene.add(gf);
+}
+
+// ───────────────────────── 体积光柱：洞口上方斜打下来的一道极淡冷光 ─────────────────────────
+const SHAFT_A = new THREE.Vector2(-2.6, 6.5);   // 光柱起点（xy，洞口上方偏左）
+const SHAFT_DIR = new THREE.Vector2(0.42, -1).normalize();
+const uShaftA = uniform(SHAFT_A.clone()), uShaftD = uniform(SHAFT_DIR.clone());
+{
+  const len = 11, wid = 2.4;
+  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  mat.colorNode = Fn(() => {
+    const u = uv();
+    const across = abs(u.x.sub(0.5)).mul(2);
+    const prof = exp(across.mul(across).mul(-4.5));
+    const along = smoothstep(0.0, 0.25, float(1).sub(u.y)).mul(smoothstep(1.0, 0.55, float(1).sub(u.y)).mul(0.6).add(0.4));
+    const shimmer = float(0.85).add(sin(u.y.mul(9).add(time.mul(0.35))).mul(sin(u.x.mul(13).sub(time.mul(0.21)))).mul(0.15));
+    const a = prof.mul(along).mul(shimmer).mul(0.06);
+    return vec4(vec3(0.62, 0.78, 1.0).mul(a), a);
+  })();
+  const shaft = new THREE.Mesh(new THREE.PlaneGeometry(wid, len), mat);
+  const mid = SHAFT_A.clone().addScaledVector(SHAFT_DIR, len / 2);
+  shaft.position.set(mid.x, mid.y, -0.8);
+  shaft.rotation.z = Math.atan2(SHAFT_DIR.y, SHAFT_DIR.x) + Math.PI / 2;
+  shaft.renderOrder = -9; shaft.name = 'shaft';
+  scene.add(shaft);
+}
+
+// ───────────────────────── 城影：恶罗海城的记忆残影（冷色、静止） ─────────────────────────
 {
   const c = document.createElement('canvas');
   c.width = 1024; c.height = 512;
   const g = c.getContext('2d');
-  g.strokeStyle = 'rgba(255,255,255,1)';
-  g.lineCap = 'round';
+  g.strokeStyle = '#fff'; g.lineCap = 'round';
   const base = 380;
-  // 城墙
-  g.lineWidth = 2;
-  g.beginPath(); g.moveTo(60, base); g.lineTo(964, base); g.stroke();
-  g.lineWidth = 1.2;
-  g.beginPath(); g.moveTo(110, base - 46); g.lineTo(914, base - 46); g.stroke();
-  // 塔楼：几道竖线 + 尖顶
+  g.lineWidth = 2; g.beginPath(); g.moveTo(60, base); g.lineTo(964, base); g.stroke();
+  g.lineWidth = 1.2; g.beginPath(); g.moveTo(110, base - 46); g.lineTo(914, base - 46); g.stroke();
   const towers = [[150, 120], [228, 70], [300, 160], [372, 95], [450, 230], [512, 300], [574, 210], [648, 110], [722, 175], [796, 80], [870, 130]];
   for (const [x, hgt] of towers) {
     const w = 10 + (hgt / 300) * 16;
-    g.lineWidth = 1.4;
-    g.beginPath();
-    g.moveTo(x - w, base - 46); g.lineTo(x - w, base - 46 - hgt);
-    g.lineTo(x, base - 46 - hgt - w * 1.6);
-    g.lineTo(x + w, base - 46 - hgt); g.lineTo(x + w, base - 46);
+    g.lineWidth = 1.4; g.beginPath();
+    g.moveTo(x - w, base - 46); g.lineTo(x - w, base - 46 - hgt); g.lineTo(x, base - 46 - hgt - w * 1.6); g.lineTo(x + w, base - 46 - hgt); g.lineTo(x + w, base - 46);
     g.stroke();
-    g.lineWidth = 0.8;
-    g.beginPath(); g.moveTo(x, base - 46); g.lineTo(x, base - 46 - hgt * 0.9); g.stroke();
+    g.lineWidth = 0.8; g.beginPath(); g.moveTo(x, base - 46); g.lineTo(x, base - 46 - hgt * 0.9); g.stroke();
   }
-  // 台阶状底座
   g.lineWidth = 1;
   for (let k = 1; k <= 3; k++) { g.beginPath(); g.moveTo(60 - k * 18, base + k * 22); g.lineTo(964 + k * 18, base + k * 22); g.stroke(); }
   const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
   const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
   mat.colorNode = Fn(() => {
     const t = texture(tex, uv());
-    // 记忆残影：竖向渐隐 + 轻微闪烁的扫描感
     const fadeY = smoothstep(0.0, 0.35, uv().y).mul(smoothstep(1.0, 0.55, uv().y));
     const flick = float(0.85).add(sin(time.mul(1.3).add(uv().y.mul(40))).mul(0.06));
-    const a = t.r.mul(fadeY).mul(flick).mul(uCity).mul(0.17);
-    return vec4(vec3(0.82, 0.74, 0.6).mul(a), a);
+    const a = t.r.mul(fadeY).mul(flick).mul(uCity).mul(0.16);
+    return vec4(vec3(0.66, 0.78, 0.92).mul(a), a);
   })();
-  const city = new THREE.Mesh(new THREE.PlaneGeometry(CLOUD_RADIUS * 3.1, CLOUD_RADIUS * 1.55), mat);
-  city.position.set(0, CLOUD_CENTER.y + 0.15, -3.2);
-  city.renderOrder = -6;
-  city.name = 'city'; scene.add(city);
+  const city = new THREE.Mesh(new THREE.PlaneGeometry(CLOUD_RADIUS * 4.2, CLOUD_RADIUS * 2.1), mat);
+  city.position.set(0, GROUND_Y + CLOUD_RADIUS * 1.0, -5.2);
+  city.renderOrder = -8; city.name = 'city';
+  scene.add(city);
 }
 
-// ───────────────────────── 眼睛：无界妖瞳 ─────────────────────────
+// ───────────────────────── 妖瞳：黑色眼球 + 红色竖瞳（无眼睑、无睫毛） ─────────────────────────
 {
-  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
-  const eyeFn = Fn(() => {
-    const p = uv().sub(0.5).mul(vec2(2.0, 1.0)).toVar();  // x ∈ [-1,1], y ∈ [-0.5,0.5]
-    const open = uEyeOpen;
-    // 杏仁形眼睑
-    const xx = clamp(abs(p.x), 0, 1);
-    const lid = pow(float(1).sub(xx.mul(xx)), 0.85).mul(open).mul(0.44);
-    const lidMask = smoothstep(lid.add(0.006), lid.sub(0.018), abs(p.y.sub(p.x.mul(0.04))));
-    const inEye = lidMask.mul(smoothstep(1.0, 0.94, xx));
-
-    // 虹膜 / 瞳孔，瞳孔跟随鼠标
-    const ic = uPupil.mul(vec2(0.16, 0.07));
-    const q = p.sub(ic);
-    const ir = length(q);
-    const IR = float(0.37);
-    const ang = atan(q.y, q.x);
-    const fib = sin(ang.mul(46).add(sin(ang.mul(7)).mul(2.0))).mul(0.5).add(0.5);
-    const fib2 = sin(ang.mul(19).add(ir.mul(30))).mul(0.5).add(0.5);
-    const radial = ir.div(IR);
-    const amber = mix(vec3(0.78, 0.48, 0.16), vec3(0.22, 0.1, 0.03), smoothstep(0.25, 1.0, radial));
-    const irisCol = amber.mul(float(0.55).add(fib.mul(0.3)).add(fib2.mul(0.15)))
-      .add(vec3(0.9, 0.62, 0.28).mul(smoothstep(0.42, 0.22, radial).mul(smoothstep(0.12, 0.25, radial)).mul(0.22)));
-    const limbal = smoothstep(0.72, 1.0, radial).mul(0.75);
-    const irisMask = smoothstep(IR.add(0.01), IR.sub(0.01), ir);
-    // 竖长蛇瞳，眼睁得越大瞳孔越细（被光刺到）
-    const pw = mix(float(0.085), float(0.05), uEyeGlow);
-    const pupilD = length(vec2(q.x.div(pw), q.y.div(0.31)));
-    const pupilMask = smoothstep(1.05, 0.9, pupilD);
-
-    // 压暗的眼白：泛灰、边缘沉入黑暗
-    const scl = vec3(0.016, 0.014, 0.012).mul(smoothstep(1.0, 0.2, length(p.mul(vec2(1.0, 1.8)))));
-    let col = mix(scl, irisCol.mul(float(1).sub(limbal)), irisMask);
-    col = mix(col, vec3(0.004, 0.003, 0.002), pupilMask);
-    // 上眼睑投影
-    const shadow = smoothstep(lid.mul(-0.2), lid, p.y).mul(0.45);
-    col = col.mul(float(1).sub(shadow));
-    const bright = float(0.25).add(uEyeGlow.mul(0.75));
-    col = col.mul(bright);
-    // 眼周极淡的琥珀辉光（在眼睑外）
-    const glow = exp(length(p.mul(vec2(0.9, 2.2))).mul(-3.0)).mul(uEyeGlow).mul(0.10).mul(smoothstep(0.02, 0.2, open));
-    const a = clamp(inEye.add(glow.mul(1.2)), 0, 1);
-    return vec4(col.mul(inEye).add(vec3(0.85, 0.5, 0.18).mul(glow)), a);
-  });
-  mat.colorNode = eyeFn();
-  const eye = new THREE.Mesh(new THREE.PlaneGeometry(CLOUD_RADIUS * 0.95, CLOUD_RADIUS * 0.475), mat);
-  eye.position.set(0, CLOUD_CENTER.y, -1.1);
-  eye.renderOrder = -4;
-  eye.name = 'eye'; scene.add(eye);
+  // 眼球写深度：它后面的雾被挡住，漆黑的球才"看得见"；只在睁开时显示
+  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: true, alphaTest: 0.5 });
+  mat.colorNode = Fn(() => {
+    const p = uv().sub(0.5).mul(2).toVar();
+    const r = length(p);
+    const vis = smoothstep(0.0, 0.25, uEyeOpen);
+    // 眼球：漆黑的球，只有一圈冷色边缘反光和一点湿亮高光
+    const disc = smoothstep(1.0, 0.975, r);
+    const sphereShade = pow(clamp(float(1).sub(r.mul(r)), 0, 1), 0.5);
+    const lit = clamp(p.x.mul(-0.55).add(p.y.mul(0.83)).div(max(r, 0.001)), 0, 1);  // 只有迎着光柱的一侧有一点冷边光
+    const rimLight = smoothstep(0.8, 0.99, r).mul(smoothstep(1.0, 0.985, r)).mul(pow(lit, 2.0)).mul(0.06).mul(float(0.4).add(uGlow));
+    const hlC = vec2(-0.36, 0.42).sub(uPupil.mul(vec2(0.08, 0.05)));
+    const hl = exp(length(p.sub(hlC)).mul(-24.0)).mul(0.7);
+    let col = vec3(0.004, 0.005, 0.007).mul(sphereShade.mul(0.6).add(0.4))
+      .add(vec3(0.5, 0.65, 0.85).mul(rimLight))
+      .add(vec3(0.75, 0.85, 1.0).mul(hl).mul(float(0.35).add(uEyeGlow.mul(0.65))));
+    // 红色竖瞳：一道锋利的裂缝，跟着光标微微偏移
+    const pc = p.sub(vec2(uPupil.x.mul(0.2), uPupil.y.mul(0.05)));
+    const hH = float(0.86);
+    const yy = clamp(abs(pc.y).div(hH), 0, 1);
+    const halfW = mix(float(0.01), float(0.05), uEyeOpen).mul(pow(float(1).sub(yy.mul(yy)), 1.4));
+    const dx = abs(pc.x);
+    const slit = smoothstep(halfW.add(0.012), halfW.sub(0.004), dx).mul(smoothstep(1.0, 0.97, yy));
+    const core = smoothstep(halfW.mul(0.55), float(0), dx).mul(smoothstep(1.0, 0.8, yy));
+    const glowIn = exp(dx.mul(-40.0)).mul(smoothstep(1.05, 0.6, yy)).mul(0.12);
+    const redI = float(0.5).add(uEyeGlow.mul(1.8)).mul(uEyeOpen);
+    const red = vec3(1.0, 0.035, 0.03).mul(slit.mul(1.0).add(core.mul(1.6)).add(glowIn)).mul(redI);
+    col = col.mul(float(1).sub(slit.mul(0.9))).add(red);
+    return vec4(col.mul(vis), disc);
+  })();
+  const eye = new THREE.Mesh(new THREE.PlaneGeometry(EYE_R * 2, EYE_R * 2), mat);
+  eye.position.copy(EYE_POS);
+  eye.renderOrder = -5; eye.name = 'eye'; eye.visible = false;
+  window.__eyeMesh = eye;
+  scene.add(eye);
 }
-
 
 // ───────────────────────── 雾团的体积辉光（散开时变淡） ─────────────────────────
 {
@@ -382,15 +487,16 @@ const computeUpdate = Fn(() => {
     const r = length(p.mul(vec2(1.0, 1.08)));
     const g = exp(r.mul(r).mul(-3.2)).mul(float(1).add(sin(p.x.mul(3.1).add(time.mul(0.11))).mul(sin(p.y.mul(2.7).sub(time.mul(0.09)))).mul(0.18)));
     const a = g.mul(uHaze).mul(0.11);
-    return vec4(vec3(0.72, 0.77, 0.86).mul(a), a);
+    return vec4(vec3(0.62, 0.74, 0.9).mul(a), a);
   })();
   const haze = new THREE.Mesh(new THREE.PlaneGeometry(CLOUD_RADIUS * 3.0, CLOUD_RADIUS * 3.0), mat);
-  haze.position.set(0, CLOUD_CENTER.y, 0.3);
-  haze.renderOrder = -2;
-  haze.name = 'haze'; if (!qs.has('nobg')) scene.add(haze);
+  haze.position.set(CLOUD_CENTER.x, CLOUD_CENTER.y, 0.0);
+  haze.renderOrder = -3; haze.name = 'haze';
+  scene.add(haze);
 }
 
-// ───────────────────────── 粒子渲染 ─────────────────────────
+// ───────────────────────── 雾粒渲染：深度分层（近大亮微虚、远小暗清） ─────────────────────────
+var pts;
 {
   const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
   const PA = positions.toAttribute();
@@ -399,52 +505,68 @@ const computeUpdate = Fn(() => {
   const s0 = PA.w;
   const seedA = vec3(s0, fract(s0.mul(17.31)), fract(s0.mul(91.7)));
   const dispA = VA.w;
-  mat.scaleNode = float(0.045).add(seedA.x.mul(seedA.x).mul(0.09)).mul(float(1).add(dispA.mul(0.6)));
+  // 深度：相对云心的 z，-1 = 远，+1 = 近
+  const depthT = clamp(PA.z.sub(uCenter.z).div(CLOUD_RADIUS).mul(0.5).add(0.5), 0, 1);
+  const sizeK = mix(float(DEPTH_SIZE[0]), float(DEPTH_SIZE[1]), depthT);
+  const brightK = mix(float(DEPTH_BRIGHT[0]), float(DEPTH_BRIGHT[1]), depthT);
+  mat.scaleNode = float(0.04).add(seedA.x.mul(seedA.x).mul(0.08)).mul(sizeK).mul(float(1).add(dispA.mul(0.5)));
   mat.colorNode = Fn(() => {
     const d = length(uv().sub(0.5)).mul(2);
-    const soft = pow(clamp(float(1).sub(d), 0, 1), 2.2);
-    const cold = mix(vec3(0.74, 0.79, 0.88), vec3(0.9, 0.92, 0.96), seedA.y);
-    // 散开的雾更淡更冷，像烟
-    const a = soft.mul(mix(float(0.075), float(0.05), dispA)).mul(float(0.7).add(seedA.z.mul(0.6)));
+    // 近处更软（轻微虚焦），远处更锐
+    const softExp = mix(float(3.0), float(1.5), depthT);
+    const soft = pow(clamp(float(1).sub(d), 0, 1), softExp);
+    const silver = mix(vec3(0.52, 0.62, 0.76), vec3(0.8, 0.88, 0.97), depthT);
+    // 甩得快的雾带一点冷青（不是彩虹）
+    const cold = mix(silver, vec3(0.5, 0.82, 0.98), clamp(dispA.mul(0.8), 0, 0.6));
+    // 光柱里的雾略微增亮
+    const rel = vec2(PA.x, PA.y).sub(uShaftA);
+    const along = rel.x.mul(uShaftD.x).add(rel.y.mul(uShaftD.y));
+    const perp = abs(rel.x.mul(uShaftD.y).sub(rel.y.mul(uShaftD.x)));
+    const inShaft = exp(perp.mul(perp).mul(-1.6)).mul(smoothstep(1.0, 3.5, along));
+    const a = soft.mul(mix(float(0.17), float(0.11), dispA)).mul(float(0.7).add(seedA.z.mul(0.6))).mul(brightK).mul(float(1).add(inShaft.mul(0.9)));
     return vec4(cold.mul(a), a);
   })();
-  var pts = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  pts = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
   pts.count = COUNT;
   pts.frustumCulled = false;
-  pts.renderOrder = 0;
-  pts.name = 'pts'; scene.add(pts);
+  pts.renderOrder = 0; pts.name = 'pts';
+  scene.add(pts);
 }
 
-// ───────────────────────── 蛇形雾气（一掠而过，可有可无） ─────────────────────────
+// ───────────────────────── 蛇形雾气：贴地一掠而过（可有可无） ─────────────────────────
 const SNAKE_N = isMobile ? 260 : 520;
+let snakeMesh;
 {
-  const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
-  // 给它一个真正的实例属性（纯 instanceIndex 的空实例网格在部分 WebGL2 驱动上会让整帧画不出来）
   const tArr = new Float32Array(SNAKE_N * 2);
   for (let i = 0; i < SNAKE_N; i++) { tArr[i * 2] = i / SNAKE_N; tArr[i * 2 + 1] = Math.random(); }
-  const snakeData = instancedArray(tArr, 'vec2').toAttribute();
-  const tParam = snakeData.x;
+  const sd = instancedArray(tArr, 'vec2').toAttribute();
+  const tParam = sd.x;
+  const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
   mat.positionNode = Fn(() => {
-    const s = uSnakeT.sub(tParam.mul(0.35));        // 头在前、尾在后
-    const x = mix(float(-7.5), float(7.5), s);
-    const y = float(-1.9).add(sin(s.mul(18.0)).mul(0.28)).add(sin(s.mul(5.0)).mul(0.2));
-    const h = snakeData.y;
-    return vec3(x.add(h.mul(0.12)), y.add(fract(h.mul(37.7)).sub(0.5).mul(0.12)), float(-1.5));
+    const s = uSnakeT.sub(tParam.mul(0.35));
+    const x = mix(float(-8.5), float(8.5), s);
+    const y = float(GROUND_Y + 0.35).add(sin(s.mul(18.0)).mul(0.22)).add(sin(s.mul(5.0)).mul(0.15));
+    return vec3(x.add(sd.y.mul(0.12)), y.add(fract(sd.y.mul(37.7)).sub(0.5).mul(0.12)), float(1.2).add(sin(s.mul(7.0)).mul(0.6)));
   })();
-  mat.scaleNode = float(0.05).mul(float(1).sub(tParam.mul(0.7)));
+  mat.scaleNode = float(0.06).mul(float(1).sub(tParam.mul(0.7)));
   mat.colorNode = Fn(() => {
     const d = length(uv().sub(0.5)).mul(2);
     const soft = pow(clamp(float(1).sub(d), 0, 1), 2.0);
-    const a = soft.mul(uSnake).mul(0.06).mul(float(1).sub(tParam));
-    return vec4(vec3(0.7, 0.74, 0.8).mul(a), a);
+    const a = soft.mul(uSnake).mul(0.07).mul(float(1).sub(tParam));
+    return vec4(vec3(0.6, 0.72, 0.86).mul(a), a);
   })();
-  const snake = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-  snake.count = SNAKE_N;
-  snake.frustumCulled = false;
-  snake.renderOrder = 1;
-  snake.name = 'snake'; snake.visible = false; scene.add(snake);
-  window.__snakeMesh = snake;
+  snakeMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  snakeMesh.count = SNAKE_N; snakeMesh.frustumCulled = false;
+  snakeMesh.renderOrder = 1; snakeMesh.name = 'snake'; snakeMesh.visible = false;
+  scene.add(snakeMesh);
 }
+
+// ───────────────────────── 后期：Bloom + ACES ─────────────────────────
+const pipeline = new THREE.RenderPipeline(renderer);
+const scenePass = pass(scene, camera);
+const sceneColor = scenePass.getTextureNode('output');
+const bloomPass = bloom(sceneColor, 0.7, 0.45, 0.12);
+pipeline.outputNode = qs.has('nobloom') ? sceneColor : sceneColor.add(bloomPass);
 
 // ───────────────────────── 输入：鼠标 / 触屏 ─────────────────────────
 const ndc = new THREE.Vector2();
@@ -513,20 +635,22 @@ function applyParams() {
 }
 applyParams();
 
-// ───────────────────────── 散开程度 → 揭示 ─────────────────────────
-// 用光标对云团的"搅动量"在 CPU 上估一个散开程度，避免每帧从 GPU 回读
-let scatter = 0, heavy = 0, eyeOpen = 0, eyeGlow = 0, city = 0;
+// ───────────────────────── 散开程度 → 揭示 / 染光 / 相机 ─────────────────────────
+let scatter = 0, heavy = 0, eyeOpen = 0, eyeGlow = 0, city = 0, glow = 0.25;
 let snakeT = -1, snakeCooldown = 0;
 const pupil = new THREE.Vector2();
+const camOff = new THREE.Vector2();
 const tmp = new THREE.Vector3();
+const perfEl = document.getElementById('perf');
 
 const bootT = performance.now(); let fpsN = 0, fpsT0 = bootT;
-let last = performance.now(), __fps = 60, perfN = 0, perfT = 0, perfChecks = 0, degraded = false;
+let last = performance.now(), __fps = 60, perfN = 0, perfT = 0, perfChecks = 0;
 function tick() {
   const now = performance.now();
   const rawDt = (now - last) / 1000;
-  let dt = Math.min(rawDt, 1 / 20);
+  let dt = Math.min(rawDt, +qs.get('simdt') || 1 / 20);   // ?simdt 仅供低帧率机器上截图自测
   last = now;
+  if (window.__pause) dt = 1e-6;   // 自测截图时冻结模拟
   const t = now / 1000;
 
   // 自测钩子：按模拟时间回放一段指针轨迹（与帧率无关），只给截图验收用
@@ -535,10 +659,11 @@ function tick() {
     A.t = (A.t || 0) + dt; const u = Math.min(A.t / A.dur, 1);
     const [x, y] = A.f(u); lastMoveT = -10; onMove(x, y); onMove(x, y);
     if (A.t - dt > 0) { rawSpeed = Math.max(rawSpeed, A.speed || 6); lastMoveT = t; }
-    if (u >= 1) { A.done = true; }
+    if (u >= 1) { A.done = true; window.__pause = true; }
   }
   if (window.__autoLeave) { window.__autoLeave = false; onLeave(); }
-  if (window.__simClock !== undefined) window.__simClock += dt;
+  if (window.__simClock !== undefined && !window.__pause) { window.__simClock += dt; if (window.__simTarget && window.__simClock >= window.__simTarget) { window.__pause = true; window.__simTarget = 0; } }
+
   // 鼠标平滑（不用原始位置，避免抖动）
   if (pointerIn) smoothWorld.lerp(rawWorld, 1 - Math.exp(-dt * 22));
   const mv = tmp.copy(smoothWorld).sub(prevSmooth).divideScalar(Math.max(dt, 1e-4));
@@ -549,11 +674,11 @@ function tick() {
   const speedN = Math.min(rawSpeed / 9, 2.2);
   uSpeed.value += (speedN - uSpeed.value) * (1 - Math.exp(-dt * 12));
   rawSpeed *= Math.exp(-dt * 10);
-  uMouse.value.copy(pointerIn ? smoothWorld : new THREE.Vector3(99, 99, 0));
+  if (pointerIn) uMouse.value.copy(smoothWorld); else uMouse.value.set(99, 99, 0);
   uMouseVel.value.copy(mv).clampLength(0, 14).multiplyScalar(uActive.value);
   uDt.value = dt;
 
-  // 散开程度估计
+  // 散开程度估计（CPU 侧，避免每帧 GPU 回读）
   const dC = pointerIn ? Math.hypot(smoothWorld.x - CLOUD_CENTER.x, smoothWorld.y - CLOUD_CENTER.y) : 99;
   const near = THREE.MathUtils.clamp(1 - (dC - params.radius * CLOUD_RADIUS * 0.3) / (CLOUD_RADIUS * 1.15), 0, 1);
   const core = THREE.MathUtils.clamp(1 - dC / (CLOUD_RADIUS * 0.75), 0, 1);
@@ -562,50 +687,70 @@ function tick() {
   const kRel = Math.sqrt(params.stiffness / DEFAULTS.stiffness);
   if (stir > scatter) scatter += (stir - scatter) * (1 - Math.exp(-dt * 3.2));
   else scatter += (stir - scatter) * (1 - Math.exp(-dt * 0.9 * kRel));
-  // 重度：光标在云团中心附近持续搅动才累积；一松手迅速消退（城影先散）
   const deepStir = uActive.value * core * Math.min(1, power);
   if (deepStir > 0.35 && scatter > 0.45) heavy = Math.min(1, heavy + dt * 0.55);
   else heavy = Math.max(0, heavy - dt * 1.3);
 
-  // 眼睛：轻度散开即开始睁，越散越大越亮
+  // 眼睛：轻度散开开始睁（竖瞳变宽变红），重度时全开最亮
   const openT = THREE.MathUtils.smoothstep(scatter, 0.05, 0.5) * 0.72 + heavy * 0.28;
   eyeOpen += (openT - eyeOpen) * (1 - Math.exp(-dt * (openT > eyeOpen ? 3.0 : 2.2)));
   const glowT = THREE.MathUtils.clamp(openT * 0.45 + heavy * 0.6, 0, 1);
   eyeGlow += (glowT - eyeGlow) * (1 - Math.exp(-dt * 2.5));
   const cityT = THREE.MathUtils.smoothstep(heavy, 0.35, 1.0) * THREE.MathUtils.smoothstep(scatter, 0.4, 0.7);
   city += (cityT - city) * (1 - Math.exp(-dt * (cityT > city ? 1.2 : 4.0)));
-  // 瞳孔追鼠标（缓慢、有迟滞）
-  const tx = pointerIn ? THREE.MathUtils.clamp((smoothWorld.x - CLOUD_CENTER.x) / (CLOUD_RADIUS * 1.4), -1, 1) : 0;
-  const ty = pointerIn ? THREE.MathUtils.clamp((smoothWorld.y - CLOUD_CENTER.y) / (CLOUD_RADIUS * 1.2), -1, 1) : 0;
+  const tx = pointerIn ? THREE.MathUtils.clamp((smoothWorld.x - EYE_POS.x) / (CLOUD_RADIUS * 1.4), -1, 1) : 0;
+  const ty = pointerIn ? THREE.MathUtils.clamp((smoothWorld.y - EYE_POS.y) / (CLOUD_RADIUS * 1.2), -1, 1) : 0;
   pupil.x += (tx - pupil.x) * (1 - Math.exp(-dt * 2.4));
   pupil.y += (ty - pupil.y) * (1 - Math.exp(-dt * 2.4));
 
+  // 环境染光：平时一点点，拨开时洞口皮和近雾被照亮，合拢时退去
+  const glowTarget = 0.25 + scatter * 0.95 + heavy * 0.3;
+  glow += (glowTarget - glow) * (1 - Math.exp(-dt * 2.0));
+
+  window.__eyeMesh.visible = eyeOpen > 0.015 && !(qs.get('hide') || '').includes('eye');
   uEyeOpen.value = eyeOpen; uEyeGlow.value = eyeGlow; uPupil.value.copy(pupil); uCity.value = city;
   uBreath.value = Math.sin(t * 0.4);
   uHaze.value = 1 - THREE.MathUtils.clamp(scatter * 1.1, 0, 0.9);
+  uGlow.value = glow; uScatter.value = scatter;
 
-  // 蛇形雾气：眼睛睁到最大时偶尔掠过一次
+  // 相机呼吸：跟着光标极缓地偏一点，再叠一层很慢的漂移（幅度小，不晕）
+  const ptx = pointerIn ? THREE.MathUtils.clamp(smoothWorld.x / (CLOUD_RADIUS * 2), -1, 1) : 0;
+  const pty = pointerIn ? THREE.MathUtils.clamp((smoothWorld.y - CLOUD_CENTER.y) / (CLOUD_RADIUS * 2), -1, 1) : 0;
+  camOff.x += (ptx - camOff.x) * (1 - Math.exp(-dt * 0.8));
+  camOff.y += (pty - camOff.y) * (1 - Math.exp(-dt * 0.8));
+  const dz = camBase.z;
+  camera.position.set(
+    camBase.x + camOff.x * dz * 0.045 + Math.sin(t * 0.071) * dz * 0.008,
+    camBase.y + camOff.y * dz * 0.03 + Math.sin(t * 0.053 + 1.3) * dz * 0.006,
+    camBase.z
+  );
+  camera.lookAt(CAM_TARGET);
+
+  // 蛇形雾气：眼睛睁到最大时偶尔贴地掠过一次
   snakeCooldown -= dt;
-  if (snakeT < 0 && eyeOpen > 0.9 && heavy > 0.85 && snakeCooldown <= 0) { snakeT = 0; snakeCooldown = 14; }
+  if (snakeT < 0 && eyeOpen > 0.9 && heavy > 0.85 && snakeCooldown <= 0) { snakeT = 0; snakeCooldown = 14; snakeMesh.visible = true; }
   if (snakeT >= 0) {
     snakeT += dt * 0.16;
     uSnake.value = Math.sin(Math.min(snakeT / 1.35, 1) * Math.PI);
-    window.__snakeMesh.visible = !qs.get('hide')?.includes('snake');
     uSnakeT.value = snakeT;
-    if (snakeT > 1.35) { snakeT = -1; uSnake.value = 0; window.__snakeMesh.visible = false; }
+    if (snakeT > 1.35) { snakeT = -1; uSnake.value = 0; snakeMesh.visible = false; }
   }
 
   if (!qs.has('nocomp')) renderer.compute(computeUpdate);
-  renderer.render(scene, camera);
+  pipeline.render();
 
-  // 自适应降档：前几秒平均帧率太低，就少画一半粒子、像素比降到 1
-  if (now - bootT > 2500) { perfN++; perfT += rawDt; }  // 跳过开头编译着色器的卡顿
-  if (!degraded && perfT > 3) {
-    if (perfN / perfT < 32) { degraded = true; pts.count = Math.floor(COUNT / 2); renderer.setPixelRatio(1); renderer.setSize(innerWidth, innerHeight, false); }
-    perfN = 0; perfT = 0; if (!degraded && ++perfChecks > 2) degraded = 'ok';
+  // 自适应降档：开场 2.5 秒后测帧率，太低就少画一半粒子、像素比降到 1（深度分层和地雾保留）
+  if (now - bootT > 2500) { perfN++; perfT += rawDt; }
+  if (degraded === false && perfT > 3) {
+    if (perfN / perfT < 32) { degraded = true; pts.count = Math.floor(COUNT / 2); frame(); }
+    perfN = 0; perfT = 0; if (degraded === false && ++perfChecks > 2) degraded = 'ok';
   }
-  fpsN++; if (now - fpsT0 > 1000) { __fps = fpsN * 1000 / (now - fpsT0); fpsN = 0; fpsT0 = now; }
-  window.__xushu = { fps: Math.round(__fps), degraded, drawn: pts.count, scatter, heavy, eyeOpen, city, active: uActive.value, backend: renderer.backend.isWebGPUBackend ? 'webgpu' : 'webgl2', count: COUNT };
+  fpsN++;
+  if (now - fpsT0 > 1000) {
+    __fps = fpsN * 1000 / (now - fpsT0); fpsN = 0; fpsT0 = now;
+    perfEl.textContent = `${pts.count} 粒子 · ${Math.round(__fps)} fps`;
+  }
+  window.__xushu = { fps: Math.round(__fps), degraded, drawn: pts.count, scatter, heavy, eyeOpen, city, glow, active: uActive.value, backend: renderer.backend.isWebGPUBackend ? 'webgpu' : 'webgl2', count: COUNT };
 }
 for (const h of (qs.get('hide') || '').split(',').filter(Boolean)) { const o = scene.getObjectByName(h); if (o && o !== scene) o.visible = false; }
 renderer.setAnimationLoop(tick);
