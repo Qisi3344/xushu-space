@@ -56,8 +56,10 @@ import * as THREE from 'three/webgpu';
 import {
   Fn, instancedArray, instanceIndex, uniform, float, vec2, vec3, vec4,
   uv, length, normalize, max, min, clamp, mix, smoothstep, sin, cos, atan, abs, pow,
-  exp, fract, hash, time, texture, pass
+  exp, fract, hash, time, texture, pass, fog, positionView, positionWorld, normalView, attribute,
+  cameraPosition, dot, cross, sqrt, dFdx, dFdy
 } from 'three/tsl';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 
 // ───────────────────────── 可改常量 ─────────────────────────
@@ -91,6 +93,7 @@ const SLIDERS = [
 
 const isMobile = matchMedia('(pointer: coarse)').matches || Math.min(innerWidth, innerHeight) < 600;
 const qs = new URLSearchParams(location.search);
+const PROC = qs.has('proc');   // v5：?proc=1 回到 v4 的程序化洞窟 / 城（默认用 Blender 烘焙的背景板）
 const COUNT = +qs.get('n') || (isMobile ? PARTICLES_MOBILE : PARTICLES_DESKTOP); // 也可用 ?n=20000 临时改
 const GROUND_N = isMobile ? 900 : 1800;
 const params = { ...DEFAULTS };
@@ -100,9 +103,9 @@ const canvas = document.getElementById('stage');
 const renderer = new THREE.WebGPURenderer({ canvas, antialias: false, alpha: false, forceWebGL: qs.has('webgl') });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight, false);
-renderer.setClearColor(0x000000, 1);
+renderer.setClearColor(new THREE.Color().setRGB(0.0075, 0.0105, 0.0155, THREE.LinearSRGBColorSpace), 1);   // = 雾色：洞尽头的开口不再是一块死黑
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.15;
+renderer.toneMappingExposure = 1.0;
 try { await renderer.init(); }
 catch (e) {
   const el = document.getElementById('err');
@@ -112,29 +115,30 @@ catch (e) {
 }
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 120);
-const CAM_TARGET = new THREE.Vector3(0, -0.35, 0);
+const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 200);
+const CAM_TARGET = new THREE.Vector3(0, -1.25, 0);   // v4：相机略俯，云团挂在画面中上，湿地面露出来
 const camBase = new THREE.Vector3();
 
 function frame() {
   const aspect = innerWidth / innerHeight;
   camera.aspect = aspect;
   const vFov = THREE.MathUtils.degToRad(camera.fov);
-  const needH = CLOUD_RADIUS * 3.7;   // 云团 + 地面
-  const needW = CLOUD_RADIUS * 2.9;
+  const needH = CLOUD_RADIUS * 4.1;   // 云团 + 湿地面倒影
+  const needW = CLOUD_RADIUS * (aspect < 0.8 ? 2.55 : 2.9);
   const dH = needH / 2 / Math.tan(vFov / 2);
   const dW = needW / 2 / Math.tan(vFov / 2) / aspect;
   const d = Math.max(dH, dW);
-  camBase.set(0, 0.55, d);
+  camBase.set(0, 0.3, d);
   camera.position.copy(camBase);
   camera.lookAt(CAM_TARGET);
   camera.updateProjectionMatrix();
   renderer.setPixelRatio(Math.min(devicePixelRatio, degraded === true ? 1 : 2));
   renderer.setSize(innerWidth, innerHeight, false);
+  if (typeof layoutForeground === 'function') layoutForeground();
 }
 let degraded = false;
 frame();
-addEventListener('resize', () => { frame(); fitLayers(); });
+addEventListener('resize', () => { frame(); if (typeof uFogStart !== 'undefined') uFogStart.value = camBase.z; });
 
 // ───────────────────────── uniforms ─────────────────────────
 const uMouse     = uniform(new THREE.Vector3(99, 99, 0));
@@ -237,251 +241,722 @@ const computeUpdate = Fn(() => {
   P.assign(vec4(pos.add(v.mul(dt)), seed.x));
 })().compute(COUNT);
 
-// ───────────────────────── 小工具：值噪声（只在 CPU 上烘贴图用一次） ─────────────────────────
-const PERM = new Uint8Array(512); { const p = [...Array(256).keys()]; for (let i = 255; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [p[i], p[j]] = [p[j], p[i]]; } for (let i = 0; i < 512; i++) PERM[i] = p[i & 255]; }
-const VAL = new Float32Array(256).map(() => Math.random() * 2 - 1);
+// ───────────────────────── 小工具：噪声（只在 CPU 上烘几何时用一次） ─────────────────────────
 const sm3 = t => t * t * (3 - 2 * t);
-const vnoise = (x, y) => { const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, X = xi & 255, Y = yi & 255;
-  const a = VAL[PERM[PERM[X] + Y]], b = VAL[PERM[PERM[X + 1] + Y]], c = VAL[PERM[PERM[X] + Y + 1]], d = VAL[PERM[PERM[X + 1] + Y + 1]], u = sm3(xf), v = sm3(yf);
-  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v; };
-const fbm = (x, y, o) => { let s = 0, f = 1, w = 0.5; for (let i = 0; i < o; i++) { s += vnoise(x * f, y * f) * w; f *= 2.03; w *= 0.5; } return s; };
 const sstep = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+const lerp = (a, b, t) => a + (b - a) * t;
+const h3 = (x, y, z) => { let n = (Math.imul(x, 374761393) + Math.imul(y, 668265263) + Math.imul(z, 1274126177)) | 0; n = Math.imul(n ^ (n >>> 13), 1274126177); return ((n ^ (n >>> 16)) >>> 0) / 4294967295 * 2 - 1; };
+const vnoise3 = (x, y, z) => { const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z), u = sm3(x - xi), v = sm3(y - yi), w = sm3(z - zi);
+  return lerp(lerp(lerp(h3(xi, yi, zi), h3(xi + 1, yi, zi), u), lerp(h3(xi, yi + 1, zi), h3(xi + 1, yi + 1, zi), u), v),
+              lerp(lerp(h3(xi, yi, zi + 1), h3(xi + 1, yi, zi + 1), u), lerp(h3(xi, yi + 1, zi + 1), h3(xi + 1, yi + 1, zi + 1), u), v), w); };
+const fbm3 = (x, y, z, o) => { let s = 0, f = 1, w = 0.5; for (let i = 0; i < o; i++) { s += vnoise3(x * f + i * 17.3, y * f - i * 9.1, z * f) * w; f *= 2.07; w *= 0.5; } return s; };
+let _seed = 20261025;
+const rnd = () => { _seed |= 0; _seed = (_seed + 0x6D2B79F5) | 0; let t = Math.imul(_seed ^ (_seed >>> 15), 1 | _seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+const rr = (a, b) => a + (b - a) * rnd();
 
-// ───────────────────────── 洞窟：三层岩壁剪影（近亮远黑），相机微动时自然出视差 ─────────────────────────
-// 每层：R 通道 = 岩石遮罩，G 通道 = 靠近洞口边缘的程度（给染光用），B = 岩面纹理
-const LAYERS = [
-  { z: -3.6,  hole: 3.7,  base: 0.0075, rim: 1.0,  seed: 11, rough: 0.34, ox: 0.25 },
-  { z: -7.5,  hole: 3.4,  base: 0.0038, rim: 0.4,  seed: 37, rough: 0.4,  ox: -0.45 },
-  { z: -14.0, hole: 3.1,  base: 0.0016, rim: 0.12, seed: 71, rough: 0.45, ox: 0.6 }
-];
-const layerMeshes = [];
-for (const L of LAYERS) {
-  const cvs = document.createElement('canvas');
-  const tex = new THREE.CanvasTexture(cvs);
-  tex.colorSpace = THREE.NoColorSpace;
-  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
-  const base = float(L.base), rimK = float(L.rim);
-  mat.colorNode = Fn(() => {
-    const t = texture(tex, uv());
-    const rockCol = vec3(0.62, 0.7, 0.82).mul(base).mul(float(0.55).add(t.b.mul(0.9)));
-    // 雾团的光漏到洞口皮上：边缘被染亮，散开时更亮
-    const rim = vec3(0.55, 0.72, 0.95).mul(pow(t.g, 3.0)).mul(uGlow).mul(rimK).mul(0.02);
-    return vec4(rockCol.add(rim.mul(t.r)), t.r);
-  })();
-  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-  m.position.z = L.z;
-  m.renderOrder = -20 + layerMeshes.length;  // 远的先画
-  m.userData = { L, cvs, tex, key: '' };
-  m.name = 'rock' + layerMeshes.length;
-  scene.add(m);
-  layerMeshes.push(m);
+// ───────────────────────── 场景布局（世界单位）─────────────────────────
+// 相机 → 云团(z=0) → 隧道 → 断崖边(z≈-15) → 深渊 + 拱桥 → 恶罗海城高台(z≈-40…-75) → 洞底冷光(z≈-92)
+const LEDGE_Z = -15, PLATEAU_Y = -6.8, CHASM_Y = -17, CITY_Z = -56;
+function caveProfile(z) {
+  const t = sstep(-12, -30, z);                 // 0 = 隧道，1 = 大溶洞
+  const end = sstep(-80, -99, z);
+  const R = (5.8 + t * 21) * (1 - end * 0.86);
+  const cy = 1.6 + t * 8.5;
+  const drop = sstep(LEDGE_Z + 0.5, LEDGE_Z - 2.5, z), rise = sstep(-31, -35.5, z);
+  const floor = lerp(lerp(GROUND_Y, CHASM_Y, drop), PLATEAU_Y - 0.15, rise);
+  return { R, cy, floor, t };
 }
-layerMeshes.reverse().forEach((m, i) => m.renderOrder = -30 + i);
 
-function bakeLayer(m, wW, hW) {
-  const { L, cvs, tex } = m.userData;
-  const W = Math.min(isMobile ? 360 : 560, Math.round(innerWidth / 2)), H = Math.max(2, Math.round(W * hW / wW));
-  cvs.width = W; cvs.height = H;
-  const g = cvs.getContext('2d'); const img = g.createImageData(W, H); const d = img.data;
-  const cx = MOUTH.x + L.ox, cy = MOUTH.y;
-  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
-    const x = (i / W - 0.5) * wW + m.position.x, y = (0.5 - j / H) * hW + m.position.y;
-    const qx = (x - cx), qy = (y - cy) * 1.18;
-    const r = Math.hypot(qx, qy), a = Math.atan2(qy, qx);
-    const n = fbm(Math.cos(a) * 1.6 + L.seed, Math.sin(a) * 1.6 + r * 0.25, 5);
-    const edge = L.hole * (1 + n * L.rough);
-    const rock = sstep(edge - 0.05, edge + 0.12, r);
-    const rimProx = 1 - sstep(edge, edge + 1.1, r);
-    const tx = fbm(x * 1.4 + L.seed, y * 1.4, 4) * 0.5 + 0.5;
-    const k = (j * W + i) * 4;
-    d[k] = Math.round(rock * 255); d[k + 1] = Math.round(rimProx * 255); d[k + 2] = Math.round(tx * 255); d[k + 3] = 255;
-  }
-  g.putImageData(img, 0, 0);
-  tex.needsUpdate = true;
-}
-function fitLayers() {
-  const vFov = THREE.MathUtils.degToRad(camera.fov);
-  for (const m of layerMeshes) {
-    const dist = camBase.z - m.position.z;
-    const h = 2 * dist * Math.tan(vFov / 2) * 1.25, w = h * camera.aspect * 1.08;
-    // 跟随相机的取景中心（相机看向 CAM_TARGET，略低）
-    const cy = camBase.y + (CAM_TARGET.y - camBase.y) * (dist / camBase.z);
-    m.position.y = cy;
-    m.scale.set(w, h, 1);
-    const key = Math.round(camera.aspect * 40) + ':' + Math.round(w);
-    if (key !== m.userData.key) { m.userData.key = key; bakeLayer(m, w, h); }
-  }
-}
-fitLayers();
-
-// ───────────────────────── 洞底灭点：一个极小的冷光点 ─────────────────────────
+// 场景雾：离相机越远越浓，越低越浓（深渊里积雾）；城的揭示会把它变薄
+const uFogD = uniform(0.06), uFogStart = uniform(camBase.z);
 {
+  const dep = max(positionView.z.negate().sub(uFogStart), 0);
+  const hK = clamp(exp(positionWorld.y.add(3.0).mul(-0.075)), 0.5, 3.2);
+  const f = float(1).sub(exp(dep.mul(uFogD).mul(hK).negate()));
+  scene.fogNode = fog(vec3(0.0075, 0.0105, 0.0155), f);
+}
+
+// 石头材质：顶点色（CPU 烘的明暗与纹理）+ wet 属性控制粗糙度（地面湿亮）
+function stoneMat() {
+  const m = new THREE.MeshStandardNodeMaterial({ vertexColors: true, metalness: 0, roughness: 0.9 });
+  m.roughnessNode = mix(float(0.93), float(0.32), attribute('wet', 'float'));
+  return m;
+}
+function colorize(geo, fn) {
+  const p = geo.attributes.position, n = p.count;
+  const col = new Float32Array(n * 3), wet = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const r = fn(p.getX(i), p.getY(i), p.getZ(i), i); col[i * 3] = r[0]; col[i * 3 + 1] = r[1]; col[i * 3 + 2] = r[2]; wet[i] = r[3] || 0; }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('wet', new THREE.BufferAttribute(wet, 1));
+  return geo;
+}
+const cold = (c, w = 0) => [c * 0.86, c * 0.94, c * 1.08, w];
+
+// ───────────────────────── 洞窟：一整条真 3D 的岩洞网格（隧道 → 大溶洞） ─────────────────────────
+function caveSurface(a, z) {
+  const P = caveProfile(z);
+  const ca = Math.cos(a), sa = Math.sin(a);
+  const n1 = fbm3(ca * 1.9 + 3, sa * 1.9, z * 0.11, 5);              // 大起伏
+  const n2 = fbm3(ca * 1.2, sa * 1.2 + 7, z * 1.05, 3);              // 沿洞方向的竖纹 / 岩脊
+  const n3 = fbm3(ca * 6 + 1, sa * 6, z * 0.6, 2);                   // 碎石感
+  const r = P.R * (1 + 0.24 * n1 + 0.1 * n2 + 0.035 * n3);
+  let x = ca * r, y = P.cy + sa * r * 0.92;
+  let onFloor = 0;
+  const fl = P.floor + (z > LEDGE_Z ? 0.07 : 0.22) * fbm3(x * 0.45, 5, z * 0.45, 3) + (P.floor < PLATEAU_Y - 1 ? 0.9 * fbm3(x * 0.2, 9, z * 0.2, 3) : 0);
+  if (y < fl) { y = fl; onFloor = 1; }
+  return { x, y, z, onFloor, n1, n2 };
+}
+if (PROC) {
+  const NA = isMobile ? 120 : 168, NZ = isMobile ? 190 : 260;
+  const Z0 = 28, Z1 = -99;
+  const pos = new Float32Array(NA * NZ * 3), col = new Float32Array(NA * NZ * 3), wet = new Float32Array(NA * NZ);
+  for (let j = 0; j < NZ; j++) {
+    const s = j / (NZ - 1);
+    const z = Z0 + (Z1 - Z0) * (s * 0.55 + s * s * 0.45);            // 近处稀、远处密一点
+    for (let i = 0; i < NA; i++) {
+      const a = i / NA * Math.PI * 2;
+      const S = caveSurface(a, z), k = j * NA + i;
+      pos[k * 3] = S.x; pos[k * 3 + 1] = S.y; pos[k * 3 + 2] = S.z;
+      let c = 0.06 + 0.032 * S.n1 + 0.022 * S.n2;
+      if (S.onFloor) c = 0.022 + 0.012 * S.n2;          // v4：湿黑地面
+      const w = S.onFloor ? 0.8 + 0.2 * sstep(0.0, -0.25, S.n1) : 0.1 * sstep(0.1, 0.4, S.n2);
+      const rc = cold(Math.max(0.03, c), w);
+      col[k * 3] = rc[0]; col[k * 3 + 1] = rc[1]; col[k * 3 + 2] = rc[2]; wet[k] = w;
+    }
+  }
+  const idx = [];
+  for (let j = 0; j < NZ - 1; j++) for (let i = 0; i < NA; i++) {
+    const a = j * NA + i, b = j * NA + (i + 1) % NA, c = (j + 1) * NA + i, d = (j + 1) * NA + (i + 1) % NA;
+    idx.push(a, c, b, b, c, d);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('wet', new THREE.BufferAttribute(wet, 1));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  // 法线要朝洞内：检查地面法线朝上，不是就翻转三角形
+  const nAt = geo.attributes.normal.getY(Math.floor(NZ * 0.1) * NA + Math.floor(NA * 0.75));
+  if (nAt < 0) { for (let q = 0; q < idx.length; q += 3) { const t = idx[q + 1]; idx[q + 1] = idx[q + 2]; idx[q + 2] = t; } geo.setIndex(idx); geo.computeVertexNormals(); }
+  const cave = new THREE.Mesh(geo, stoneMat());
+  cave.name = 'cave';
+  scene.add(cave);
+}
+
+// 钟乳石 / 石笋 / 断柱：给空间加前中后景的"刻度"
+if (PROC) {
+  const parts = [];
+  const addCone = (x, y, z, r, h, down) => {
+    const g = new THREE.ConeGeometry(r, h, 7, 3);
+    const p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) { const f = 1 + 0.25 * vnoise3(p.getX(i) * 3 + x, p.getY(i) * 2, p.getZ(i) * 3 + z); p.setX(i, p.getX(i) * f); p.setZ(i, p.getZ(i) * f); }
+    if (down) g.rotateX(Math.PI);
+    g.translate(x, y + (down ? -h / 2 : h / 2), z);
+    g.deleteAttribute('uv');
+    parts.push(colorize(g.toNonIndexed(), (X, Y, Z) => cold(0.055 + 0.02 * vnoise3(X * 2, Y * 2, Z * 2), 0.15)));
+  };
+  for (let k = 0; k < (isMobile ? 110 : 190); k++) {
+    const z = rr(10, -85), P = caveProfile(z);
+    const a = rr(Math.PI * 0.18, Math.PI * 0.82);
+    const S = caveSurface(a, z);
+    const big = P.t > 0.5;
+    addCone(S.x * 0.97, S.y + 0.4, z, rr(0.12, big ? 1.1 : 0.45) * (0.5 + P.t), rr(0.8, big ? 9 : 2.6), true);
+  }
+  // 深渊里的石笋（从雾里探出来）
+  for (let k = 0; k < 26; k++) { const z = rr(-17, -33), x = rr(-16, 16); if (Math.abs(x) < 2.4) continue; addCone(x, CHASM_Y - 1, z, rr(0.5, 1.4), rr(3, 9), false); }
+  // 断崖边的断柱和碎石：离云团最近的一组实物，被雾团的光照亮
+  for (let k = 0; k < 9; k++) {
+    const x = (k % 2 ? 1 : -1) * rr(2.6, 5.0), z = rr(-6, -14);
+    const h = rr(0.6, 3.2), r = rr(0.22, 0.38);
+    const g = new THREE.CylinderGeometry(r * 0.92, r, h, 10, 1);
+    g.translate(x, GROUND_Y + h / 2 - 0.1, z); g.rotateZ(rr(-0.04, 0.04));
+    g.deleteAttribute('uv');
+    parts.push(colorize(g.toNonIndexed(), () => cold(0.085, 0.1)));
+    const cap = new THREE.BoxGeometry(r * 2.6, 0.22, r * 2.6); cap.translate(x, GROUND_Y + h + 0.0, z);
+    if (h > 1.5) { cap.deleteAttribute('uv'); parts.push(colorize(cap.toNonIndexed(), () => cold(0.08, 0.1))); }
+  }
+  for (let k = 0; k < 22; k++) {
+    const g = new THREE.DodecahedronGeometry(rr(0.12, 0.5), 0);
+    g.scale(1, rr(0.4, 0.8), 1); g.translate(rr(-5.5, 5.5), GROUND_Y + 0.05, rr(2, -14));
+    g.deleteAttribute('uv');
+    parts.push(colorize(g.toNonIndexed(), () => cold(0.045, 0.6)));
+  }
+  const m = new THREE.Mesh(mergeGeometries(parts), stoneMat());
+  m.name = 'stal';
+  scene.add(m);
+}
+
+// ───────────────────────── 恶罗海城：程序化生成的地底古城 ─────────────────────────
+const cityParts = [], winParts = [];
+const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _s1 = new THREE.Vector3(1, 1, 1), _v = new THREE.Vector3();
+function stone(g, shade = 1, wetK = 0) {
+  if (g.index) g = g.toNonIndexed();
+  if (g.attributes.uv) g.deleteAttribute('uv');
+  const base = (0.15 + 0.06 * rnd()) * shade;
+  colorize(g, (x, y, z) => cold(base * (0.62 + 0.38 * sstep(PLATEAU_Y - 2, 9, y)) * (0.9 + 0.2 * vnoise3(x * 1.7, y * 1.7, z * 1.7)), wetK));
+  return g;
+}
+function place(list, g, x, y, z, ry = 0) { g.applyMatrix4(_m4.compose(_v.set(x, y, z), _q.setFromEuler(_e.set(0, ry, 0)), _s1)); list.push(g); return g; }
+const box = (w, h, d) => { const g = new THREE.BoxGeometry(w, h, d); g.translate(0, h / 2, 0); return g; };
+const winGeo = () => new THREE.BoxGeometry(0.13, 0.24, 0.05);
+
+// 一栋楼：局部坐标里拼好，再整体旋转放置；正面（+z）开几扇冷色窗
+function building(x, y0, z, ry, w, d, h, roof, shade = 1) {
+  const local = [], win = [];
+  const S = (g, sh) => [g, sh];
+  local.push(S(box(w, h, d), shade));
+  // 檐口 + 基座线脚
+  { const cor = box(w + 0.16, 0.14, d + 0.16); cor.translate(0, h - 0.07, 0); local.push(S(cor, shade * 1.1)); }
+  const plinth = box(w + 0.22, 0.3, d + 0.22); local.push(S(plinth, shade * 0.9));
+  let top = h;
+  if (roof === 'pyramid') { const g = new THREE.ConeGeometry(Math.max(w, d) * 0.74, Math.max(w, d) * 0.85, 4); g.rotateY(Math.PI / 4); g.scale(w / Math.max(w, d), 1, d / Math.max(w, d)); g.translate(0, h + Math.max(w, d) * 0.425, 0); local.push(S(g, shade * 1.15)); top += Math.max(w, d) * 0.85; }
+  else if (roof === 'dome') { const r = Math.min(w, d) * 0.46; const dr = new THREE.CylinderGeometry(r * 1.02, r * 1.02, 0.35, 16); dr.translate(0, h + 0.17, 0); local.push(S(dr, shade)); const g = new THREE.SphereGeometry(r, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2); g.scale(1, 1.25, 1); g.translate(0, h + 0.35, 0); local.push(S(g, shade * 1.2)); const sp = new THREE.ConeGeometry(0.07, 1.3, 6); sp.translate(0, h + 0.35 + r * 1.25 + 0.6, 0); local.push(S(sp, shade * 1.3)); top += r * 1.25 + 1.6; }
+  else if (roof === 'spire') { const g = new THREE.ConeGeometry(Math.min(w, d) * 0.55, h * 0.9, 8); g.translate(0, h + h * 0.45, 0); local.push(S(g, shade * 1.15)); top += h * 0.9; }
+  else if (roof === 'step') { let ww = w, dd = d, yy = h; for (let k = 0; k < 3; k++) { ww *= 0.72; dd *= 0.72; const g = box(ww, h * 0.22, dd); g.translate(0, yy, 0); local.push(S(g, shade * (1 + k * 0.06))); yy += h * 0.22; } top = yy; }
+  else { // 平顶 + 雉堞
+    const n = Math.max(2, Math.round(w / 0.45));
+    for (let k = 0; k < n; k++) { const g = box(0.2, 0.28, 0.2); g.translate(-w / 2 + 0.1 + k * (w - 0.2) / (n - 1), h, d / 2 - 0.1); local.push(S(g, shade)); const g2 = box(0.2, 0.28, 0.2); g2.translate(-w / 2 + 0.1 + k * (w - 0.2) / (n - 1), h, -d / 2 + 0.1); local.push(S(g2, shade)); }
+  }
+  // 窗：一层约 1.1 高，随机点亮少数几扇
+  const floors = Math.floor((h - 0.6) / 1.1), cols = Math.max(1, Math.floor((w - 0.3) / 0.55));
+  for (let f = 0; f < floors; f++) for (let c = 0; c < cols; c++) {
+    if (rnd() > 0.28) continue;
+    const g = winGeo(); g.translate(-((cols - 1) * 0.55) / 2 + c * 0.55, 0.75 + f * 1.1, d / 2 + 0.02); win.push(g);
+  }
+  const M = _m4.compose(_v.set(x, y0, z), _q.setFromEuler(_e.set(0, ry, 0)), _s1).clone();
+  for (const [g, sh] of local) { g.applyMatrix4(M); cityParts.push(stone(g, sh)); }
+  for (const g of win) { g.applyMatrix4(M); winParts.push(g.index ? g.toNonIndexed() : g); }
+  return top;
+}
+function ellipseRing(cx, cz, rx, rz, y0, h, shadeK) { // 椭圆形台地
+  const g = new THREE.CylinderGeometry(1, 1.04, h, 48, 1);
+  g.scale(rx, 1, rz); g.translate(cx, y0 + h / 2, cz);
+  cityParts.push(stone(g, shadeK));
+  // 台地边缘一圈矮墙
+  const n = Math.round((rx + rz) * 2.2);
+  for (let k = 0; k < n; k++) {
+    const a = k / n * Math.PI * 2, a2 = (k + 0.62) / n * Math.PI * 2;
+    const x1 = cx + Math.cos(a) * rx, z1 = cz + Math.sin(a) * rz, x2 = cx + Math.cos(a2) * rx, z2 = cz + Math.sin(a2) * rz;
+    const len = Math.hypot(x2 - x1, z2 - z1);
+    const b = box(len, 0.45, 0.22); b.rotateY(-Math.atan2(z2 - z1, x2 - x1)); b.translate((x1 + x2) / 2, y0 + h, (z1 + z2) / 2);
+    cityParts.push(stone(b, shadeK * 1.05));
+  }
+}
+function stairs(x, z0, z1, y0, y1, w) {
+  const n = Math.max(4, Math.round(Math.abs(y1 - y0) / 0.22));
+  for (let k = 0; k < n; k++) {
+    const t = k / n, zz = lerp(z0, z1, t), yy = lerp(y0, y1, (k + 1) / n);
+    const g = box(w, yy - y0 + 0.01, Math.abs(z1 - z0) / n + 0.02); g.translate(x, y0, zz - Math.sign(z1 - z0) * Math.abs(z1 - z0) / n / 2);
+    cityParts.push(stone(g, 0.95));
+  }
+  // 两侧扶墙
+  for (const sx of [-1, 1]) { const len = Math.hypot(z1 - z0, y1 - y0); const g = box(0.3, 0.5, len); g.rotateX(Math.atan2(y1 - y0, Math.abs(z1 - z0))); g.translate(x + sx * (w / 2 + 0.15), (y0 + y1) / 2 - 0.1, (z0 + z1) / 2); cityParts.push(stone(g, 1)); }
+}
+if (PROC) {
+  _seed = 7741;
+  // 台地：高台 → 中台 → 上台（一层比一层靠后、一层比一层高）
+  const T = [
+    { cz: CITY_Z, rx: 17, rz: 15, y: PLATEAU_Y - 4, h: 4 },
+    { cz: CITY_Z - 4, rx: 11.5, rz: 9.5, y: PLATEAU_Y, h: 2.2 },
+    { cz: CITY_Z - 7, rx: 6.6, rz: 5.6, y: PLATEAU_Y + 2.2, h: 2.2 }
+  ];
+  for (const t of T) ellipseRing(0, t.cz, t.rx, t.rz, t.y, t.h, 0.9);
+  const topOf = i => T[i].y + T[i].h;
+
+  // 外城墙 + 城楼（正门朝向相机）
+  {
+    const rx = 15.6, rz = 13.6, y0 = topOf(0), n = 44;
+    for (let k = 0; k < n; k++) {
+      const a = k / n * Math.PI * 2 + Math.PI / n, a2 = (k + 1) / n * Math.PI * 2 + Math.PI / n;
+      const mid = (a + a2) / 2;
+      if (Math.abs(Math.atan2(Math.sin(mid - Math.PI / 2), Math.cos(mid - Math.PI / 2))) < 0.08) continue; // 门洞
+      const x1 = Math.cos(a) * rx, z1 = CITY_Z + Math.sin(a) * rz, x2 = Math.cos(a2) * rx, z2 = CITY_Z + Math.sin(a2) * rz;
+      const len = Math.hypot(x2 - x1, z2 - z1), ang = -Math.atan2(z2 - z1, x2 - x1);
+      const w = box(len + 0.05, 2.3, 0.7); w.rotateY(ang); w.translate((x1 + x2) / 2, y0, (z1 + z2) / 2); cityParts.push(stone(w, 0.85));
+      for (let c = 0; c < 3; c++) { const cr = box(0.32, 0.34, 0.74); cr.translate(-len / 2 + (c + 0.5) * len / 3, 2.3, 0); cr.rotateY(ang); cr.translate((x1 + x2) / 2, y0, (z1 + z2) / 2); cityParts.push(stone(cr, 0.9)); }
+      if (k % 4 === 0) { // 圆塔
+        const tw = new THREE.CylinderGeometry(0.85, 0.95, 3.6, 14); tw.translate(x1, y0 + 1.8, z1); cityParts.push(stone(tw, 0.95));
+        const rf = new THREE.ConeGeometry(1.05, 1.8, 14); rf.translate(x1, y0 + 3.6 + 0.9, z1); cityParts.push(stone(rf, 1.1));
+      }
+    }
+    // 城门楼：两座方塔 + 拱
+    const gz = CITY_Z + rz, gy = y0;
+    for (const sx of [-1, 1]) building(sx * 2.0, gy, gz, 0, 1.8, 1.8, 5.2, 'pyramid', 1.05);
+    const arch = new THREE.TorusGeometry(1.15, 0.32, 8, 16, Math.PI); arch.translate(0, gy + 2.4, gz); cityParts.push(stone(arch, 1));
+    const lintel = box(3.0, 0.8, 1.2); lintel.translate(0, gy + 3.5, gz); cityParts.push(stone(lintel, 1));
+  }
+
+  // 主轴大台阶：城门 → 中台 → 上台
+  stairs(0, CITY_Z + 12.8, CITY_Z + 5.0, topOf(0), topOf(1), 2.6);
+  stairs(0, CITY_Z + 2.2, CITY_Z - 1.6, topOf(1), topOf(2), 2.0);
+
+  // 民居与塔楼：每层台地上散布，越往中心越高
+  const placed = [];
+  const tryPlace = (lv, n) => {
+    const t = T[lv], inner = T[lv + 1];
+    for (let k = 0, got = 0; k < n * 12 && got < n; k++) {
+      const a = rnd() * Math.PI * 2, rN = Math.sqrt(rr(0.05, 1));
+      const x = Math.cos(a) * t.rx * 0.9 * rN, z = t.cz + Math.sin(a) * t.rz * 0.88 * rN;
+      if (inner && ((x / (inner.rx + 1.4)) ** 2 + ((z - inner.cz) / (inner.rz + 1.4)) ** 2) < 1) continue;
+      if (Math.abs(x) < 2.2 && z > CITY_Z - 2 - lv * 4) continue;          // 让出主轴
+      if (lv === 0 && ((x / 14.6) ** 2 + ((z - CITY_Z) / 12.6) ** 2) > 1) continue; // 墙内
+      const w = rr(1.0, 2.4), d = rr(1.0, 2.2);
+      if (placed.some(p => Math.hypot(p[0] - x, p[1] - z) < (p[2] + Math.max(w, d)) * 0.62)) continue;
+      placed.push([x, z, Math.max(w, d)]);
+      const central = 1 - Math.min(1, Math.hypot(x, (z - CITY_Z + 6) * 1.2) / 17);
+      const h = rr(1.4, 3.2) + central * rr(1, 4.5) + lv * 0.6;
+      const roof = ['flat', 'flat', 'pyramid', 'dome', 'step', 'spire'][Math.floor(rnd() * (central > 0.4 ? 6 : 4.4))];
+      building(x, topOf(lv), z, rr(-0.25, 0.25) + (rnd() < 0.15 ? Math.PI / 2 : 0), w, d, h, roof, rr(0.85, 1.1));
+      got++;
+    }
+  };
+  tryPlace(0, isMobile ? 55 : 80);
+  tryPlace(1, isMobile ? 22 : 30);
+
+  // 上台：神殿（四层阶梯金字塔 + 中央高塔 + 两座尖塔）
+  {
+    const y0 = topOf(2), cz = CITY_Z - 8;
+    let yy = y0; const tiers = [[8.2, 6.8], [6.6, 5.4], [5.0, 4.1], [3.6, 3.0]];
+    tiers.forEach(([w, d], k) => { const g = box(w, 1.5, d); g.translate(0, yy, cz); cityParts.push(stone(g, 1 + k * 0.05)); yy += 1.5;
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) { const ob = new THREE.ConeGeometry(0.16, 1.3, 4); ob.translate(sx * (w / 2 - 0.25), yy + 0.65, cz + sz * (d / 2 - 0.25)); cityParts.push(stone(ob, 1.2)); } });
+    stairs(0, cz + 3.4 + 2.2, cz + 1.5, y0, yy, 1.4);
+    // 中央高塔
+    const tw = new THREE.CylinderGeometry(1.0, 1.2, 6.2, 8); tw.translate(0, yy + 3.1, cz); cityParts.push(stone(tw, 1.1));
+    const ring = new THREE.CylinderGeometry(1.55, 1.55, 0.3, 8); ring.translate(0, yy + 4.2, cz); cityParts.push(stone(ring, 1.2));
+    const ring2 = new THREE.CylinderGeometry(1.35, 1.35, 0.25, 8); ring2.translate(0, yy + 6.2, cz); cityParts.push(stone(ring2, 1.2));
+    const dome = new THREE.SphereGeometry(1.05, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.62); dome.scale(1, 1.5, 1); dome.translate(0, yy + 6.3, cz); cityParts.push(stone(dome, 1.25));
+    const sp = new THREE.ConeGeometry(0.12, 4.2, 6); sp.translate(0, yy + 6.3 + 1.5 + 2.0, cz); cityParts.push(stone(sp, 1.3));
+    for (let f = 0; f < 4; f++) { const g = winGeo(); g.scale(1.3, 1.8, 1); g.translate(0, yy + 1.2 + f * 1.3, cz + 1.13); winParts.push(g.index ? g.toNonIndexed() : g); }
+    // 两座细尖塔
+    for (const sx of [-1, 1]) {
+      const m = new THREE.CylinderGeometry(0.32, 0.4, 11, 8); m.translate(sx * 5.2, y0 + 5.5, cz - 2.4); cityParts.push(stone(m, 1.05));
+      const b = new THREE.CylinderGeometry(0.55, 0.55, 0.3, 8); b.translate(sx * 5.2, y0 + 8.5, cz - 2.4); cityParts.push(stone(b, 1.15));
+      const c = new THREE.ConeGeometry(0.42, 2.8, 8); c.translate(sx * 5.2, y0 + 11 + 1.4, cz - 2.4); cityParts.push(stone(c, 1.2));
+      for (let f = 0; f < 5; f++) if (rnd() < 0.6) { const g = winGeo(); g.translate(sx * 5.2, y0 + 1.5 + f * 1.7, cz - 2.4 + 0.4); winParts.push(g.index ? g.toNonIndexed() : g); }
+    }
+  }
+
+  // 崖壁民居：凿在两侧洞壁上的石屋，给大溶洞"刻度"
+  for (let k = 0; k < (isMobile ? 36 : 60); k++) {
+    const z = rr(-36, -80), side = rnd() < 0.5 ? -1 : 1, P = caveProfile(z);
+    const y = rr(PLATEAU_Y, PLATEAU_Y + 11);
+    const a = side > 0 ? Math.asin(THREE.MathUtils.clamp((y - P.cy) / (P.R * 0.92), -1, 1)) : Math.PI - Math.asin(THREE.MathUtils.clamp((y - P.cy) / (P.R * 0.92), -1, 1));
+    const S = caveSurface(a, z);
+    const x = S.x * 0.93;
+    building(x, y - 0.6, z, -side * rr(1.2, 1.5) + Math.PI / 2 * 0 , rr(0.8, 1.7), rr(1.0, 1.8), rr(1.0, 2.4), rnd() < 0.3 ? 'step' : 'flat', 0.8);
+  }
+
+  // 渡渊拱桥：两层拱的高架石桥，从断崖一路接到城门
+  if (!qs.has('nobridge')) {
+    const z0 = LEDGE_Z + 0.6, z1 = CITY_Z + 13.9, yTop0 = GROUND_Y - 0.02, yTop1 = topOf(0) + 0.05, yBot = CHASM_Y - 1.2;
+    const topAt = z => lerp(yTop0, yTop1, (z0 - z) / (z0 - z1));
+    const sh = new THREE.Shape();
+    sh.moveTo(-z0, yBot); sh.lineTo(-z1, yBot); sh.lineTo(-z1, yTop1); sh.lineTo(-z0, yTop0); sh.lineTo(-z0, yBot);
+    const span = 3.3, pier = 0.85, L = z0 - z1, nS = Math.floor((L - pier) / (span + pier));
+    const off = (L - nS * (span + pier) - pier) / 2;
+    for (let k = 0; k < nS; k++) {
+      const za = z0 - off - pier - k * (span + pier), zb = za - span, zc = (za + zb) / 2;
+      const ty = topAt(zc);
+      const spring1 = Math.min(ty - 5.2, -9.6);
+      const h1 = new THREE.Path(); h1.moveTo(-za, yBot + 0.6); h1.lineTo(-za, spring1); h1.absarc(-zc, spring1, span / 2, Math.PI, 0, true); h1.lineTo(-zb, yBot + 0.6); h1.lineTo(-za, yBot + 0.6);
+      sh.holes.push(h1);
+      // 上层两小拱
+      for (const s of [0, 1]) {
+        const sa = za - 0.25 - s * (span / 2), sb = sa - span / 2 + 0.5, sc = (sa + sb) / 2, sp2 = ty - 1.9;
+        if (sp2 - (spring1 + span / 2) < 1.6) continue;
+        const h2 = new THREE.Path(); h2.moveTo(-sa, spring1 + span / 2 + 0.75); h2.lineTo(-sa, sp2); h2.absarc(-sc, sp2, (sa - sb) / 2, Math.PI, 0, true); h2.lineTo(-sb, spring1 + span / 2 + 0.75); h2.lineTo(-sa, spring1 + span / 2 + 0.75);
+        sh.holes.push(h2);
+      }
+    }
+    const g = new THREE.ExtrudeGeometry(sh, { depth: 1.7, bevelEnabled: false, curveSegments: 10 });
+    g.rotateY(Math.PI / 2); g.translate(-0.85, 0, 0);
+    cityParts.push(stone(g, 0.95, 0.1));
+    // 桥面护栏
+    const nR = Math.round(L / 0.7);
+    for (let k = 0; k < nR; k++) for (const sx of [-1, 1]) { const z = z0 - (k + 0.5) * L / nR; const b = box(0.16, 0.42, 0.16); b.translate(sx * 0.78, topAt(z), z); cityParts.push(stone(b, 1)); }
+    for (const sx of [-1, 1]) { const len = Math.hypot(L, yTop1 - yTop0); const r = box(0.14, 0.08, len); r.rotateX(Math.atan2(yTop1 - yTop0, L)); r.translate(sx * 0.78, (yTop0 + yTop1) / 2 + 0.42, (z0 + z1) / 2); cityParts.push(stone(r, 1.1)); }
+    // 桥头两根石柱
+    for (const sx of [-1, 1]) { const c = new THREE.CylinderGeometry(0.3, 0.36, 2.6, 10); c.translate(sx * 1.2, GROUND_Y + 1.3, z0 + 0.4); cityParts.push(stone(c, 1.15)); }
+  }
+
+  // v4：城 = 记忆城影。保留真 3D 几何（视差），但只画成一层低对比的暗剪影：
+  // 黑色、低透明度，只有压在远处冷光和浓雾前面时才读得出来；不受灯光，不点窗。
+  const cmat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: true });
+  cmat.fog = false;
+  cmat.colorNode = Fn(() => {
+    const dist = positionView.z.negate();
+    // 越远越淡（浓雾吞掉），越靠下越淡（深渊积雾）；顶部一线冷色边，像被远光勾出来
+    const farK = clamp(float(1.15).sub(dist.div(95)), 0.25, 1);
+    const lowK = smoothstep(float(PLATEAU_Y - 6), float(PLATEAU_Y + 3), positionWorld.y);
+    const a = uCity.mul(0.62).mul(farK).mul(mix(float(0.35), float(1), lowK));
+    const tint = vec3(0.012, 0.016, 0.024).add(vec3(0.05, 0.065, 0.09).mul(pow(clamp(normalView.y, 0, 1), 3.0)).mul(0.5));
+    return vec4(tint, a);
+  })();
+  const city = new THREE.Mesh(mergeGeometries(cityParts), cmat);
+  city.name = 'city'; city.renderOrder = -30; city.visible = false;
+  window.__cityMesh = city;
+  scene.add(city);
+
+  // 鬼火窗：极淡的冷光，城揭示时才亮起来
+  const wmat = new THREE.MeshBasicNodeMaterial();
+  wmat.colorNode = Fn(() => {
+    const ph = hash(positionWorld.x.mul(13.1).add(positionWorld.y.mul(7.7)).add(positionWorld.z.mul(3.3)).floor());
+    const flick = float(0.7).add(sin(time.mul(float(1.5).add(ph.mul(2.0))).add(ph.mul(40))).mul(0.3));
+    return vec3(0.42, 0.72, 0.95).mul(float(0.06).add(uCity.mul(2.2))).mul(flick);
+  })();
+  for (const g of winParts) { if (g.attributes.uv) g.deleteAttribute('uv'); }
+  const wins = new THREE.Mesh(mergeGeometries(winParts), wmat);
+  wins.name = 'windows'; wins.visible = false;   // v4：城影不点窗（亮窗会让它像一座真实打光的城）
+  scene.add(wins);
+  window.__cityStats = { parts: cityParts.length, windows: winParts.length, tris: city.geometry.attributes.position.count / 3 };
+}
+
+// ───────────────────────── 灯光（v4）：只有一道从洞口上方斜下来的冷光，其余全暗；唯一的红来自妖瞳 ─────────────────────────
+// 光柱轴线：从洞口上方 SHAFT_TOP 斜打到湿地面 SHAFT_BOT，正好穿过云团左上部
+const SHAFT_TOP = new THREE.Vector3(-3.4, 7.2, -1.2), SHAFT_BOT = new THREE.Vector3(0.9, GROUND_Y, 0.9);
+const hemi = new THREE.HemisphereLight(0x111a28, 0x010102, 0.18); scene.add(hemi);
+const shaftLight = new THREE.SpotLight(0xa8c4ff, 60, 22, 0.24, 0.85, 1.4);
+shaftLight.position.copy(SHAFT_TOP); shaftLight.target.position.copy(SHAFT_BOT);
+scene.add(shaftLight, shaftLight.target);
+const cloudLight = new THREE.PointLight(0x9fb8e8, 2.5, 13, 1.6);        // 雾团自己的一点点冷辉，只够勾出近处石头的边
+cloudLight.position.set(0, 0.3, -0.6); scene.add(cloudLight);   // 它在湿地面上的高光正好落在云团倒影的位置
+const eyeLight = new THREE.PointLight(0xff1206, 0, 7, 2);             // 妖瞳：暗红，只染一点身后的雾和地面
+eyeLight.position.set(EYE_POS.x, EYE_POS.y, EYE_POS.z - 0.6); scene.add(eyeLight);
+
+// ───────────────────────── 洞底冷光：城的背后，一个极远的冷白光源 ─────────────────────────
+if (PROC) {
   const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  mat.fog = false;
   mat.colorNode = Fn(() => {
     const d = length(uv().sub(0.5)).mul(2);
-    const core = pow(clamp(float(1).sub(d), 0, 1), 6.0);
-    const flick = float(0.85).add(sin(time.mul(0.7)).mul(0.15));
-    const a = core.mul(flick).mul(float(0.9).add(uGlow.mul(0.6)));
-    return vec4(vec3(0.75, 0.9, 1.0).mul(a).mul(2.2), a);
+    const core = pow(clamp(float(1).sub(d), 0, 1), 3.2);
+    const pin = pow(clamp(float(1).sub(d.mul(7)), 0, 1), 4.0);
+    const a = core.mul(float(0.025).add(uCity.mul(0.34))).add(pin.mul(float(0.22).add(uGlow.mul(0.12))));
+    return vec4(vec3(0.7, 0.84, 1.0).mul(a), a);
   })();
   const vp = new THREE.Sprite(mat);
-  vp.position.set(MOUTH.x * 0.6, MOUTH.y * 0.7 - 0.2, -26);
-  vp.scale.setScalar(0.45);
+  vp.position.set(0, 1.5, -91);
+  vp.scale.setScalar(48);
   vp.renderOrder = -40; vp.name = 'vanish';
   scene.add(vp);
-}
-
-// ───────────────────────── 地面：被雾团微微照亮的冷黑地面 ─────────────────────────
-{
-  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false });
-  mat.colorNode = Fn(() => {
-    const p = uv().sub(0.5).mul(vec2(30, 30));       // 世界坐标（x, z）
-    const wz = float(-3).sub(p.y);                    // uv.y 朝 -z，平面中心在 z = -3
-    const dist = length(vec2(p.x.sub(uCenter.x), wz.sub(uCenter.z)));
-    const pool = exp(dist.mul(dist).mul(-0.08)).mul(uGlow).mul(0.018);
-    const far = smoothstep(14.0, 3.0, length(p));
-    const col = vec3(0.004, 0.0048, 0.006).add(vec3(0.5, 0.66, 0.85).mul(pool));
-    return vec4(col, far);
+  // 城影背后的一片远冷光（只在城影浮现时亮），给黑剪影一个可以压上去的底
+  const bm = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  bm.fog = false;
+  bm.colorNode = Fn(() => {
+    const p = uv().sub(vec2(0.5, 0.42)).mul(vec2(2.0, 2.6));
+    const g = exp(dot(p, p).mul(-2.2));
+    const a = g.mul(uCity).mul(0.06);
+    return vec4(vec3(0.5, 0.64, 0.85).mul(a), 1.0);   // 加法混合按 src*alpha，这里 alpha=1 直接给线性亮度
   })();
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), mat);
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.set(0, GROUND_Y - 0.05, -3);
-  ground.renderOrder = -12; ground.name = 'ground';
-  scene.add(ground);
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(110, 60), bm);
+  back.position.set(0, 4, -84); back.renderOrder = -39; back.name = 'cityGlow';
+  scene.add(back);
 }
 
-// ───────────────────────── 贴地雾：一层慢速漂移的低浓度雾粒 ─────────────────────────
-{
-  const arr = new Float32Array(GROUND_N * 4);
-  for (let i = 0; i < GROUND_N; i++) {
-    arr[i * 4] = (Math.random() * 2 - 1) * 8.5;
-    arr[i * 4 + 1] = Math.random();
-    arr[i * 4 + 2] = -7 + Math.random() * 10.5;
-    arr[i * 4 + 3] = Math.random();
+const uShaftA = uniform(new THREE.Vector2(SHAFT_TOP.x, SHAFT_TOP.y)), uShaftD = uniform(new THREE.Vector2(SHAFT_BOT.x - SHAFT_TOP.x, SHAFT_BOT.y - SHAFT_TOP.y).normalize());
+// ───────────────────────── 体积光柱：真 3D 的光锥（溶洞顶裂缝 + 隧道顶裂缝） ─────────────────────────
+function shaftMesh(rTop, rBot, h, base, k) {
+  const g = new THREE.CylinderGeometry(rTop, rBot, h, 36, 1, true);
+  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  mat.fog = false;
+  mat.colorNode = Fn(() => {
+    const facing = abs(normalView.z);
+    const edge = pow(facing, 2.2);
+    const v = uv().y;
+    const along = smoothstep(0.0, 0.35, v).mul(smoothstep(1.0, 0.8, v));
+    const shimmer = float(0.85).add(sin(v.mul(11).add(time.mul(0.3))).mul(sin(uv().x.mul(37).sub(time.mul(0.17)))).mul(0.15));
+    const a = edge.mul(along).mul(shimmer).mul(k());
+    return vec4(vec3(0.6, 0.76, 1.0).mul(a), 1.0);   // v4：线性亮度（alpha=1，避免加法混合把它平方掉）
+  })();
+  const m = new THREE.Mesh(g, mat);
+  m.renderOrder = -9;
+  return m;
+}
+if (PROC) {
+  // v4：主光柱沿 SHAFT_TOP → SHAFT_BOT（和聚光灯同轴）；第二道更淡、更靠后；城上方那道只在城影出现时极淡地亮
+  const along = (m, a, b) => { const d = new THREE.Vector3().subVectors(a, b); m.position.addVectors(a, b).multiplyScalar(0.5); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize()); };
+  const L1 = SHAFT_TOP.distanceTo(SHAFT_BOT);
+  const s2 = shaftMesh(0.4, 2.3, L1, 0, () => float(0.028).add(uGlow.mul(0.004)));
+  along(s2, SHAFT_TOP, SHAFT_BOT); s2.name = 'shaft'; scene.add(s2);
+  const T2 = new THREE.Vector3(3.6, 8.5, -7.5), B2 = new THREE.Vector3(1.9, GROUND_Y, -5.0);
+  const s3 = shaftMesh(0.25, 1.3, T2.distanceTo(B2), 0, () => float(0.01));
+  along(s3, T2, B2); s3.name = 'shaft2'; scene.add(s3);
+  const s1 = shaftMesh(1.0, 6.5, 40, 0, () => uCity.mul(0.012));
+  s1.position.set(1.5, 14, CITY_Z - 6); s1.rotation.z = 0.06; s1.name = 'shaftCity'; scene.add(s1);
+}
+// ───────────────────────── v5：Blender 烘焙背景板（2.5D） ─────────────────────────
+// assets/{land|port}_cave.webp：洞窟板；_city.webp：城层（上半 = 预乘颜色 C，下半 = 覆盖度 a）；_depth.png：16 位逆距离。
+// 用和 Blender 相机完全一致的参数，把每个网格顶点沿它的视线推回到深度图给出的距离 → 背景板在世界里"立"起来，
+// 现有的相机跟随 / 呼吸自动产生真视差；粒子按真实深度被前景岩石遮挡。板子里存的是"进 ACES 之前"的线性值，出画面后正好还原调色。
+// 城层用 city 变量合成：L = C·k + L_cave·(1 − a·k)，k = city（重度散开 + 睁眼才出现，回聚时最先退）。
+var plateMesh = null, plateVariant = null, plateLoading = null;
+const uPlateGain = uniform(+(qs.get('plate') || 1));
+// 橡皮膜拉伸检测：每个网格顶点存周围 3×3 的逆深度落差（gap）；uPlateNom = 当前画布每像素的角度，uPlateO = 出图相机位置
+const uPlateNom = uniform(1e-3), uPlateO = uniform(new THREE.Vector3()); var plateMeta = null; const _dbs = new THREE.Vector2();
+function updatePlateNom() {
+  if (!plateMeta) return;
+  renderer.getDrawingBufferSize(_dbs);
+  uPlateNom.value = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / Math.max(_dbs.y, 1);
+}
+if (!PROC) window.__cityMesh = { visible: false };
+const plateVariantFor = () => (camBase.z > 14.2 ? 'port' : 'land');
+async function buildPlate(v) {
+  const A = 'assets/';
+  const loadImg = src => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
+  const tl = new THREE.TextureLoader();
+  const [meta, depthImg, caveTex, cityTex] = await Promise.all([
+    fetch(A + v + '.json').then(r => r.json()), loadImg(A + v + '_depth.png'),
+    tl.loadAsync(A + v + '_cave.webp'), tl.loadAsync(A + v + '_city.webp')
+  ]);
+  caveTex.colorSpace = THREE.SRGBColorSpace; cityTex.colorSpace = THREE.NoColorSpace;
+  for (const t of [caveTex, cityTex]) { t.generateMipmaps = false; t.minFilter = t.magFilter = THREE.LinearFilter; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true; }
+  // 解深度（R=高字节 G=低字节）
+  const cv = document.createElement('canvas'); cv.width = depthImg.width; cv.height = depthImg.height;
+  const cx = cv.getContext('2d', { willReadFrequently: true }); cx.drawImage(depthImg, 0, 0);
+  const px = cx.getImageData(0, 0, cv.width, cv.height).data, DW = cv.width, DH = cv.height;
+  const invN = 1 / meta.depth.near, invF = 1 / meta.depth.far;
+  const s16 = (x, y) => { const k = (y * DW + x) * 4; return (px[k] * 256 + px[k + 1]) / 65535; };
+  const invAt = (u, w) => {
+    const x = Math.min(Math.max(u * DW - 0.5, 0), DW - 1.001), y = Math.min(Math.max(w * DH - 0.5, 0), DH - 1.001);
+    const x0 = x | 0, y0 = y | 0, fx = x - x0, fy = y - y0;
+    const a = s16(x0, y0), b = s16(x0 + 1, y0), c = s16(x0, y0 + 1), d = s16(x0 + 1, y0 + 1);
+    // 深度图在出图时已把前景轮廓向外膨胀并柔化，这里直接双线性：断层处是一段平滑的"橡皮膜"，不会出台阶
+    return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+  };
+  const NX = v === 'land' ? 384 : 144, NY = v === 'land' ? 192 : 256;
+  const O = new THREE.Vector3(...meta.pos), F = new THREE.Vector3(...meta.fwd), R = new THREE.Vector3(...meta.right), U = new THREE.Vector3(...meta.up);
+  const th = Math.tan(THREE.MathUtils.degToRad(meta.vfov / 2)), asp = meta.aspect;
+  const pos = new Float32Array((NX + 1) * (NY + 1) * 3), uvs = new Float32Array((NX + 1) * (NY + 1) * 2);
+  const dir = new THREE.Vector3();
+  for (let j = 0; j <= NY; j++) for (let i = 0; i <= NX; i++) {
+    const u = i / NX, w = j / NY, k = j * (NX + 1) + i;
+    // 边缘一圈往外多推一点，镜头微动时也不露底
+    const ex = (i === 0 ? -0.04 : i === NX ? 0.04 : 0), ey = (j === 0 ? 0.04 : j === NY ? -0.04 : 0);
+    dir.copy(F).addScaledVector(R, ((u * 2 - 1) + ex) * th * asp).addScaledVector(U, ((1 - w * 2) + ey) * th).normalize();
+    const t = 1 / (invAt(u, w) * (invN - invF) + invF);
+    pos[k * 3] = O.x + dir.x * t; pos[k * 3 + 1] = O.y + dir.y * t; pos[k * 3 + 2] = O.z + dir.z * t;
+    uvs[k * 2] = u; uvs[k * 2 + 1] = 1 - w;
   }
+  // 每个顶点：周围 3×3 网格内逆深度（1/世界距离）的最大落差 → 镜头平移时这里会被拉成膜
+  const inv = new Float32Array((NX + 1) * (NY + 1)), gap = new Float32Array((NX + 1) * (NY + 1));
+  for (let k = 0; k < inv.length; k++) inv[k] = 1 / Math.hypot(pos[k * 3] - O.x, pos[k * 3 + 1] - O.y, pos[k * 3 + 2] - O.z);
+  for (let j = 0; j <= NY; j++) for (let i = 0; i <= NX; i++) {
+    let lo = 1e9, hi = -1e9;
+    for (let b = Math.max(j - 1, 0); b <= Math.min(j + 1, NY); b++) for (let a = Math.max(i - 1, 0); a <= Math.min(i + 1, NX); a++) {
+      const x = inv[b * (NX + 1) + a]; if (x < lo) lo = x; if (x > hi) hi = x;
+    }
+    gap[j * (NX + 1) + i] = hi - lo;
+  }
+  const idx = new Uint32Array(NX * NY * 6); let q = 0;
+  for (let j = 0; j < NY; j++) for (let i = 0; i < NX; i++) {
+    const a = j * (NX + 1) + i, b = a + 1, c = a + NX + 1, d = c + 1;
+    idx[q++] = a; idx[q++] = c; idx[q++] = b; idx[q++] = b; idx[q++] = c; idx[q++] = d;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  geo.setAttribute('gap', new THREE.BufferAttribute(gap, 1));
+  geo.setIndex(new THREE.BufferAttribute(idx, 1));
+  const mat = new THREE.MeshBasicNodeMaterial({ side: THREE.DoubleSide });
+  mat.fog = false;
+  mat.colorNode = Fn(() => {
+    const st = uv();
+    const cave = texture(caveTex, st).rgb;
+    const cC = pow(texture(cityTex, vec2(st.x, st.y.mul(0.5).add(0.5))).rgb, vec3(2.2));
+    const cA = texture(cityTex, vec2(st.x, st.y.mul(0.5))).r;
+    const k = uCity;
+    const col = cave.mul(float(1).sub(cA.mul(k))).add(cC.mul(k)).toVar();
+    // 断层处的膜：视差（像素）≈ 相机离出图位置的平移 × 逆深度落差 ÷ 每像素角度；拉开越多越暗，读成岩石边的阴影
+    const gapPx = attribute('gap', 'float').mul(length(cameraPosition.sub(uPlateO))).div(uPlateNom);
+    col.mulAssign(mix(float(1), float(0.15), smoothstep(16.0, 40.0, gapPx)));
+    // 拨雾时云团把近处的岩石和水面照亮一点（世界距离衰减），合拢时退去
+    const dc = length(positionWorld.sub(uCenter));
+    const lit = exp(dc.mul(dc).mul(-0.03)).mul(max(uGlow.sub(0.25), 0)).mul(0.8);
+    col.addAssign(cave.mul(lit).add(vec3(0.0025, 0.0035, 0.0055).mul(lit)));
+    // 妖瞳睁开时极弱的暗红只渗到眼睛后下方的水面
+    const de = length(positionWorld.sub(vec3(EYE_POS.x, GROUND_Y, EYE_POS.z)));
+    col.addAssign(vec3(0.02, 0.0006, 0.0005).mul(exp(de.mul(de).mul(-0.12))).mul(uEyeGlow.mul(uEyeOpen)));
+    return col.mul(uPlateGain);
+  })();
+  const m = new THREE.Mesh(geo, mat);
+  m.name = 'plate'; m.renderOrder = -50; m.frustumCulled = false;
+  if (plateMesh) { scene.remove(plateMesh); plateMesh.geometry.dispose(); plateMesh.material.dispose(); }
+  scene.add(m); plateMesh = m; plateVariant = v; plateMeta = meta; uPlateO.value.copy(O); updatePlateNom();
+  window.__plate = { variant: v, grid: [NX, NY], depth: [DW, DH] };
+}
+async function ensurePlate() {
+  if (PROC) return;
+  const v = plateVariantFor();
+  if (v === plateVariant || plateLoading === v) return;
+  plateLoading = v;
+  try { await buildPlate(v); } catch (e) { console.error('plate load failed', e); }
+  plateLoading = null;
+}
+await ensurePlate();
+addEventListener('resize', () => { ensurePlate(); updatePlateNom(); });
+
+
+// ───────────────────────── 贴地雾 + 深渊积雾：两层慢速漂移的低浓度雾粒 ─────────────────────────
+function mistLayer(N, gen, yBase, yAmp, scale0, scale1, amt, wrapW, name, litNode) {
+  const arr = new Float32Array(N * 4);
+  for (let i = 0; i < N; i++) { const p = gen(); arr[i * 4] = p[0]; arr[i * 4 + 1] = Math.random(); arr[i * 4 + 2] = p[1]; arr[i * 4 + 3] = Math.random(); }
   const gd = instancedArray(arr, 'vec4').toAttribute();
   const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  mat.fog = false;
   const drift = time.mul(0.06);
   const gx = gd.x.add(sin(drift.add(gd.w.mul(6.28))).mul(0.9)).add(drift.mul(gd.w.sub(0.5)).mul(2.0));
-  const wrapX = fract(gx.div(17).add(0.5)).sub(0.5).mul(17);
-  const gpos = vec3(wrapX, float(GROUND_Y).add(gd.y.mul(0.55)).add(sin(drift.mul(2.0).add(gd.w.mul(20))).mul(0.06)), gd.z);
+  const wrapX = fract(gx.div(wrapW).add(0.5)).sub(0.5).mul(wrapW);
+  const gpos = vec3(wrapX, float(yBase).add(gd.y.mul(yAmp)).add(sin(drift.mul(2.0).add(gd.w.mul(20))).mul(0.06)), gd.z);
   mat.positionNode = gpos;
-  mat.scaleNode = float(0.7).add(gd.w.mul(1.1));
+  mat.scaleNode = float(scale0).add(gd.w.mul(scale1));
   mat.colorNode = Fn(() => {
     const d = length(uv().sub(0.5)).mul(2);
     const soft = pow(clamp(float(1).sub(d), 0, 1), 1.6);
-    // 离云团越近越被染亮
-    const toCloud = length(vec2(gpos.x.sub(uCenter.x), gpos.z.sub(uCenter.z)));
-    const lit = float(0.5).add(exp(toCloud.mul(toCloud).mul(-0.09)).mul(float(0.5).add(uGlow)).mul(2.0));
-    const a = soft.mul(0.022).mul(lit).mul(float(1).sub(gd.y.mul(0.5)));
+    const a = soft.mul(amt).mul(litNode(gpos)).mul(float(1).sub(gd.y.mul(0.5)));
     return vec4(vec3(0.6, 0.72, 0.86).mul(a), a);
   })();
-  const gf = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-  gf.count = GROUND_N; gf.frustumCulled = false;
-  gf.renderOrder = -11; gf.name = 'groundfog';
-  scene.add(gf);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  m.count = N; m.frustumCulled = false; m.renderOrder = -11; m.name = name;
+  scene.add(m);
 }
+// v4：地雾整体压暗，只有光柱落地处和云团正下方稍亮（以前这里叠出了白地板）
+mistLayer(GROUND_N, () => [(Math.random() * 2 - 1) * 7.5, LEDGE_Z + 1 + Math.random() * (14 - LEDGE_Z)], GROUND_Y, 0.55, 0.7, 1.1, 0.016, 15, 'groundfog',
+  g => { const toCloud = length(vec2(g.x.sub(uCenter.x), g.z.sub(uCenter.z)));
+         const toShaft = length(vec2(g.x.sub(SHAFT_BOT.x), g.z.sub(SHAFT_BOT.z)));
+         return float(0.22).add(exp(toCloud.mul(toCloud).mul(-0.12)).mul(float(0.3).add(uGlow.mul(0.2)))).add(exp(toShaft.mul(toShaft).mul(-0.35)).mul(1.1)); });
+if (PROC && !qs.has('nochasm')) mistLayer(isMobile ? 260 : 480, () => [(Math.random() * 2 - 1) * 15, -16 - Math.random() * 18], CHASM_Y + 3, 5.5, 2.6, 3.5, 0.016, 30, 'chasmfog',
+  () => float(0.4).add(uCity.mul(1.1)));
 
-// ───────────────────────── 体积光柱：洞口上方斜打下来的一道极淡冷光 ─────────────────────────
-const SHAFT_A = new THREE.Vector2(-2.6, 6.5);   // 光柱起点（xy，洞口上方偏左）
-const SHAFT_DIR = new THREE.Vector2(0.42, -1).normalize();
-const uShaftA = uniform(SHAFT_A.clone()), uShaftD = uniform(SHAFT_DIR.clone());
-{
-  const len = 11, wid = 2.4;
-  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
-  mat.colorNode = Fn(() => {
-    const u = uv();
-    const across = abs(u.x.sub(0.5)).mul(2);
-    const prof = exp(across.mul(across).mul(-4.5));
-    const along = smoothstep(0.0, 0.25, float(1).sub(u.y)).mul(smoothstep(1.0, 0.55, float(1).sub(u.y)).mul(0.6).add(0.4));
-    const shimmer = float(0.85).add(sin(u.y.mul(9).add(time.mul(0.35))).mul(sin(u.x.mul(13).sub(time.mul(0.21)))).mul(0.15));
-    const a = prof.mul(along).mul(shimmer).mul(0.06);
-    return vec4(vec3(0.62, 0.78, 1.0).mul(a), a);
-  })();
-  const shaft = new THREE.Mesh(new THREE.PlaneGeometry(wid, len), mat);
-  const mid = SHAFT_A.clone().addScaledVector(SHAFT_DIR, len / 2);
-  shaft.position.set(mid.x, mid.y, -0.8);
-  shaft.rotation.z = Math.atan2(SHAFT_DIR.y, SHAFT_DIR.x) + Math.PI / 2;
-  shaft.renderOrder = -9; shaft.name = 'shaft';
-  scene.add(shaft);
+// ───────────────────────── 妖瞳（v4）：独立的粒子眼 ─────────────────────────
+// 不进雾的 compute（WebGL2 回退的 storage / varying 上限），位置在顶点阶段解析算出：
+// 每颗粒子从云团里一个随机点，随 eyeOpen 汇到眼球球面（朝相机的半球）上；闭眼时散回云里。
+// 黑球用普通混合（加法混合的黑色是看不见的）+ 写深度，靠身后的亮雾和一圈冷色逆光读出球形轮廓；
+// 红色竖瞳是另一批加法发光粒子，跟着 uPupil 偏移。不受鼠标斥力影响。
+const EYE_N = +qs.get('eyen') || (isMobile ? 7000 : 12000);
+const EYE_RED_N = Math.round(EYE_N * 0.2);
+const uEyeSize = uniform(1);          // 降档时少画一半，颗粒放大 √2 补满球面
+var eyeBlack, eyeRed, eyeHalo;
+function randInCloud() {
+  let x, y, z, l; do { x = Math.random() * 2 - 1; y = Math.random() * 2 - 1; z = Math.random() * 2 - 1; l = x * x + y * y + z * z; } while (l > 1);
+  const r = CLOUD_RADIUS * 0.85; return [x * r + CLOUD_CENTER.x, y * r * 0.95 + CLOUD_CENTER.y, z * r + CLOUD_CENTER.z];
 }
-
-// ───────────────────────── 城影：恶罗海城的记忆残影（冷色、静止） ─────────────────────────
+const eyeEase = t => t.mul(t).mul(float(3).sub(t.mul(2)));
+function eyeFlight(fromA, targetP, seed, delay, spread) {
+  // 先迟后早：每颗粒子的出发时间不同，散回去时反过来
+  // eyeOpen≈0.05 开始有粒子归位，≈0.7 全部归位；半睁时是一颗残缺的球
+  const t = clamp(uEyeOpen.sub(0.05).sub(delay.mul(spread)).div(0.65 - spread), 0, 1);
+  const e = eyeEase(t);
+  const drift = vec3(sin(time.mul(0.41).add(seed.mul(31.0))), sin(time.mul(0.37).add(seed.mul(17.0))), sin(time.mul(0.29).add(seed.mul(53.0)))).mul(0.18);
+  const from = fromA.add(drift);
+  // 飞行途中绕眼睛打一个旋，像墨被吸进去
+  const toT = targetP.sub(from);
+  const side = normalize(cross(toT, vec3(0, 0, 1)).add(vec3(0.0001, 0, 0))).mul(sin(e.mul(3.14159)).mul(0.55).mul(seed.sub(0.5)));
+  return { t, pos: mix(from, targetP, e).add(side) };
+}
 {
-  const c = document.createElement('canvas');
-  c.width = 1024; c.height = 512;
-  const g = c.getContext('2d');
-  g.strokeStyle = '#fff'; g.lineCap = 'round';
-  const base = 380;
-  g.lineWidth = 2; g.beginPath(); g.moveTo(60, base); g.lineTo(964, base); g.stroke();
-  g.lineWidth = 1.2; g.beginPath(); g.moveTo(110, base - 46); g.lineTo(914, base - 46); g.stroke();
-  const towers = [[150, 120], [228, 70], [300, 160], [372, 95], [450, 230], [512, 300], [574, 210], [648, 110], [722, 175], [796, 80], [870, 130]];
-  for (const [x, hgt] of towers) {
-    const w = 10 + (hgt / 300) * 16;
-    g.lineWidth = 1.4; g.beginPath();
-    g.moveTo(x - w, base - 46); g.lineTo(x - w, base - 46 - hgt); g.lineTo(x, base - 46 - hgt - w * 1.6); g.lineTo(x + w, base - 46 - hgt); g.lineTo(x + w, base - 46);
-    g.stroke();
-    g.lineWidth = 0.8; g.beginPath(); g.moveTo(x, base - 46); g.lineTo(x, base - 46 - hgt * 0.9); g.stroke();
+  // 黑眼球：斐波那契半球（+z 朝相机，多铺到 100°，让轮廓边缘也是满的），再打乱顺序，降档时取前一半依旧均匀
+  const fromArr = new Float32Array(EYE_N * 4), dirArr = new Float32Array(EYE_N * 4);
+  const order = [...Array(EYE_N).keys()].sort(() => Math.random() - 0.5);
+  const zMin = -0.2, ga = Math.PI * (3 - Math.sqrt(5));
+  for (let k = 0; k < EYE_N; k++) {
+    const i = order[k];
+    const zz = 1 - (k + 0.5) / EYE_N * (1 - zMin);
+    const rr2 = Math.sqrt(1 - zz * zz), th = k * ga;
+    const f = randInCloud();
+    fromArr.set([f[0], f[1], f[2], Math.random()], i * 4);
+    dirArr.set([Math.cos(th) * rr2, Math.sin(th) * rr2, zz, Math.random()], i * 4);
   }
-  g.lineWidth = 1;
-  for (let k = 1; k <= 3; k++) { g.beginPath(); g.moveTo(60 - k * 18, base + k * 22); g.lineTo(964 + k * 18, base + k * 22); g.stroke(); }
-  const tex = new THREE.CanvasTexture(c);
-  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const FA = instancedArray(fromArr, 'vec4').toAttribute();
+  const DA = instancedArray(dirArr, 'vec4').toAttribute();
+  const dir = DA.xyz;
+  const target = vec3(EYE_POS.x, EYE_POS.y, EYE_POS.z).add(dir.mul(EYE_R).mul(float(1).add(sin(time.mul(0.6)).mul(0.004))));
+  const fl = eyeFlight(FA.xyz, target, DA.w, FA.w, 0.3);
+  const mat = new THREE.SpriteNodeMaterial({ transparent: false, depthWrite: true, alphaTest: 0.5 });
+  mat.fog = false;
+  mat.positionNode = fl.pos;
+  const baseS = 2.15 * EYE_R / Math.sqrt(EYE_N) * 1.9;
+  mat.scaleNode = float(baseS).mul(uEyeSize).mul(float(0.85).add(DA.w.mul(0.3))).mul(smoothstep(0.3, 0.8, fl.t));   // 刚出发的墨粒是隐形的，快到球面才显形，免得在云里留下一块灰
   mat.colorNode = Fn(() => {
-    const t = texture(tex, uv());
-    const fadeY = smoothstep(0.0, 0.35, uv().y).mul(smoothstep(1.0, 0.55, uv().y));
-    const flick = float(0.85).add(sin(time.mul(1.3).add(uv().y.mul(40))).mul(0.06));
-    const a = t.r.mul(fadeY).mul(flick).mul(uCity).mul(0.16);
-    return vec4(vec3(0.66, 0.78, 0.92).mul(a), a);
+    const d = length(uv().sub(0.5)).mul(2);
+    const toCam = normalize(cameraPosition.sub(target));
+    const facing = clamp(dot(dir, toCam), 0, 1);
+    const rim = pow(float(1).sub(facing), 3.0);
+    // 迎着光柱（左上方）的一侧边缘略亮；其余漆黑
+    const lit = clamp(dot(dir, normalize(vec3(-0.5, 0.75, 0.3))), 0, 1);
+    const hl = smoothstep(0.985, 0.998, dot(dir, normalize(vec3(-0.32, 0.4, 0.86)))).mul(0.22).mul(float(0.3).add(uEyeGlow.mul(0.7)));
+    const settled = smoothstep(0.85, 1.0, fl.t);
+    const col = vec3(0.003, 0.004, 0.006)
+      .add(vec3(0.42, 0.55, 0.75).mul(rim.mul(float(0.10).add(lit.mul(0.25))).mul(float(0.5).add(uGlow.mul(0.4)))).mul(settled))
+      .add(vec3(0.7, 0.8, 0.95).mul(hl).mul(settled))
+      .add(vec3(0.012, 0.014, 0.02).mul(float(1).sub(settled)));   // 还在飞的墨粒带一点灰，不然在黑处看不见轨迹
+    return vec4(col, smoothstep(1.0, 0.7, d));
   })();
-  const city = new THREE.Mesh(new THREE.PlaneGeometry(CLOUD_RADIUS * 4.2, CLOUD_RADIUS * 2.1), mat);
-  city.position.set(0, GROUND_Y + CLOUD_RADIUS * 1.0, -5.2);
-  city.renderOrder = -8; city.name = 'city';
-  scene.add(city);
+  eyeBlack = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  eyeBlack.count = EYE_N; eyeBlack.frustumCulled = false; eyeBlack.name = 'eye'; eyeBlack.visible = false;
+  scene.add(eyeBlack);
 }
-
-// ───────────────────────── 妖瞳：黑色眼球 + 红色竖瞳（无眼睑、无睫毛） ─────────────────────────
+// 红色竖瞳：一道细长锋利的裂缝，粒子贴在球面前方一点点
+var redTarget, redFrom, redSeed;
 {
-  // 眼球写深度：它后面的雾被挡住，漆黑的球才"看得见"；只在睁开时显示
-  const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: true, alphaTest: 0.5 });
+  const fromArr = new Float32Array(EYE_RED_N * 4), slitArr = new Float32Array(EYE_RED_N * 4);
+  for (let i = 0; i < EYE_RED_N; i++) {
+    const f = randInCloud();
+    fromArr.set([f[0], f[1], f[2], Math.random()], i * 4);
+    const u = (Math.random() * 2 - 1);
+    const yU = Math.sign(u) * Math.pow(Math.abs(u), 0.85);
+    const side = (Math.random() + Math.random() + Math.random()) / 1.5 - 1;   // 中心更密，边缘稀
+    slitArr.set([yU, side, Math.random(), Math.random() < 0.12 ? 1 : 0], i * 4);
+  }
+  const FA = instancedArray(fromArr, 'vec4').toAttribute();
+  const SA = instancedArray(slitArr, 'vec4').toAttribute();
+  const yy = SA.x, side = SA.y;
+  const halfW = mix(float(0.01), float(0.075), uEyeOpen).mul(pow(clamp(float(1).sub(yy.mul(yy)), 0, 1), 1.3)).mul(EYE_R);
+  const lx = side.mul(halfW).add(uPupil.x.mul(EYE_R * 0.22));
+  const ly = yy.mul(EYE_R * 0.86).add(uPupil.y.mul(EYE_R * 0.06));
+  const lz = sqrt(max(float(EYE_R * EYE_R).sub(lx.mul(lx)).sub(ly.mul(ly)), 0.0)).add(EYE_R * 0.02);
+  const target = vec3(EYE_POS.x, EYE_POS.y, EYE_POS.z).add(vec3(lx, ly, lz));
+  const fl = eyeFlight(FA.xyz, target, SA.z, FA.w, 0.25);
+  redTarget = target; redFrom = fl.pos; redSeed = SA;
+  const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  mat.fog = false;
+  mat.positionNode = fl.pos;
+  const glowP = SA.w;   // 12% 是大号柔光粒，给裂缝一层红晕
+  mat.scaleNode = mix(float(0.022), float(0.11), glowP).mul(float(0.8).add(SA.z.mul(0.4))).mul(smoothstep(0.15, 0.6, fl.t));
   mat.colorNode = Fn(() => {
-    const p = uv().sub(0.5).mul(2).toVar();
-    const r = length(p);
-    const vis = smoothstep(0.0, 0.25, uEyeOpen);
-    // 眼球：漆黑的球，只有一圈冷色边缘反光和一点湿亮高光
-    const disc = smoothstep(1.0, 0.975, r);
-    const sphereShade = pow(clamp(float(1).sub(r.mul(r)), 0, 1), 0.5);
-    const lit = clamp(p.x.mul(-0.55).add(p.y.mul(0.83)).div(max(r, 0.001)), 0, 1);  // 只有迎着光柱的一侧有一点冷边光
-    const rimLight = smoothstep(0.8, 0.99, r).mul(smoothstep(1.0, 0.985, r)).mul(pow(lit, 2.0)).mul(0.06).mul(float(0.4).add(uGlow));
-    const hlC = vec2(-0.36, 0.42).sub(uPupil.mul(vec2(0.08, 0.05)));
-    const hl = exp(length(p.sub(hlC)).mul(-24.0)).mul(0.7);
-    let col = vec3(0.004, 0.005, 0.007).mul(sphereShade.mul(0.6).add(0.4))
-      .add(vec3(0.5, 0.65, 0.85).mul(rimLight))
-      .add(vec3(0.75, 0.85, 1.0).mul(hl).mul(float(0.35).add(uEyeGlow.mul(0.65))));
-    // 红色竖瞳：一道锋利的裂缝，跟着光标微微偏移
-    const pc = p.sub(vec2(uPupil.x.mul(0.2), uPupil.y.mul(0.05)));
-    const hH = float(0.86);
-    const yy = clamp(abs(pc.y).div(hH), 0, 1);
-    const halfW = mix(float(0.01), float(0.05), uEyeOpen).mul(pow(float(1).sub(yy.mul(yy)), 1.4));
-    const dx = abs(pc.x);
-    const slit = smoothstep(halfW.add(0.012), halfW.sub(0.004), dx).mul(smoothstep(1.0, 0.97, yy));
-    const core = smoothstep(halfW.mul(0.55), float(0), dx).mul(smoothstep(1.0, 0.8, yy));
-    const glowIn = exp(dx.mul(-40.0)).mul(smoothstep(1.05, 0.6, yy)).mul(0.12);
-    const redI = float(0.5).add(uEyeGlow.mul(1.8)).mul(uEyeOpen);
-    const red = vec3(1.0, 0.035, 0.03).mul(slit.mul(1.0).add(core.mul(1.6)).add(glowIn)).mul(redI);
-    col = col.mul(float(1).sub(slit.mul(0.9))).add(red);
-    return vec4(col.mul(vis), disc);
+    const d = length(uv().sub(0.5)).mul(2);
+    const soft = pow(clamp(float(1).sub(d), 0, 1), mix(float(1.6), float(2.4), glowP));
+    const centre = float(1).sub(abs(side));
+    const redI = float(0.35).add(uEyeGlow.mul(1.0)).mul(smoothstep(0.0, 0.3, uEyeOpen));
+    const a = soft.mul(mix(float(0.5).add(centre.mul(0.8)), float(0.045), glowP)).mul(redI).mul(smoothstep(0.2, 0.9, fl.t));
+    return vec4(vec3(1.0, 0.03, 0.025).mul(a), a);
   })();
-  const eye = new THREE.Mesh(new THREE.PlaneGeometry(EYE_R * 2, EYE_R * 2), mat);
-  eye.position.copy(EYE_POS);
-  eye.renderOrder = -5; eye.name = 'eye'; eye.visible = false;
-  window.__eyeMesh = eye;
-  scene.add(eye);
+  eyeRed = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  eyeRed.count = EYE_RED_N; eyeRed.frustumCulled = false; eyeRed.renderOrder = 2; eyeRed.name = 'eyeRed'; eyeRed.visible = false;
+  scene.add(eyeRed);
 }
+// 眼球背后一圈极淡的冷色逆光（被黑球的深度挡住中间，只剩边缘），让球的剪影从雾里跳出来
+{
+  const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  mat.fog = false;
+  mat.colorNode = Fn(() => {
+    const d = length(uv().sub(0.5)).mul(2);
+    const rq = d.sub(0.66).div(0.09); const ring = exp(rq.mul(rq).negate());
+    const fill = pow(clamp(float(1).sub(d), 0, 1), 2.0).mul(0.35);
+    const a = ring.mul(0.6).add(fill).mul(uEyeOpen.mul(uEyeOpen)).mul(0.05).mul(float(0.6).add(uGlow.mul(0.4)));
+    return vec4(vec3(0.55, 0.68, 0.88).mul(a), a);
+  })();
+  eyeHalo = new THREE.Sprite(mat);
+  eyeHalo.position.set(EYE_POS.x, EYE_POS.y, EYE_POS.z - 0.5);
+  eyeHalo.scale.setScalar(EYE_R * 3.4);
+  eyeHalo.renderOrder = -6; eyeHalo.name = 'eyeHalo'; eyeHalo.visible = false;
+  scene.add(eyeHalo);
+}
+window.__eyeMesh = { set visible(v) { eyeBlack.visible = eyeRed.visible = eyeHalo.visible = v; }, get visible() { return eyeBlack.visible; } };
 
 // ───────────────────────── 雾团的体积辉光（散开时变淡） ─────────────────────────
 {
   const mat = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  mat.fog = false;
   mat.colorNode = Fn(() => {
     const p = uv().sub(0.5).mul(2);
     const r = length(p.mul(vec2(1.0, 1.08)));
@@ -499,6 +974,7 @@ const uShaftA = uniform(SHAFT_A.clone()), uShaftD = uniform(SHAFT_DIR.clone());
 var pts;
 {
   const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  mat.fog = false;
   const PA = positions.toAttribute();
   const VA = velocities.toAttribute();
   mat.positionNode = PA.xyz;
@@ -522,8 +998,8 @@ var pts;
     const rel = vec2(PA.x, PA.y).sub(uShaftA);
     const along = rel.x.mul(uShaftD.x).add(rel.y.mul(uShaftD.y));
     const perp = abs(rel.x.mul(uShaftD.y).sub(rel.y.mul(uShaftD.x)));
-    const inShaft = exp(perp.mul(perp).mul(-1.6)).mul(smoothstep(1.0, 3.5, along));
-    const a = soft.mul(mix(float(0.17), float(0.11), dispA)).mul(float(0.7).add(seedA.z.mul(0.6))).mul(brightK).mul(float(1).add(inShaft.mul(0.9)));
+    const inShaft = exp(perp.mul(perp).mul(-1.1)).mul(smoothstep(1.5, 5.0, along));
+    const a = soft.mul(mix(float(0.15), float(0.095), dispA)).mul(float(0.7).add(seedA.z.mul(0.6))).mul(brightK).mul(float(0.62).add(inShaft.mul(1.5)));
     return vec4(cold.mul(a), a);
   })();
   pts = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
@@ -531,6 +1007,130 @@ var pts;
   pts.frustumCulled = false;
   pts.renderOrder = 0; pts.name = 'pts';
   scene.add(pts);
+}
+
+// ───────────────────────── 湿地面上的假倒影（v4，不用反射 pass） ─────────────────────────
+// 把粒子按地面镜像，再沿视线投到地面上画一颗竖向拉长、被涟漪打碎的淡粒子：一次额外的实例绘制，几乎不花钱。
+const FLOOR_Y = GROUND_Y + 0.03;
+const rippleTex = (() => {
+  const S = 128, P = 16, data = new Uint8Array(S * S * 4);
+  const hp = (x, y) => h3(((x % P) + P) % P, ((y % P) + P) % P, 7);
+  const vn = (x, y) => { const xi = Math.floor(x), yi = Math.floor(y), u = sm3(x - xi), v = sm3(y - yi);
+    return lerp(lerp(hp(xi, yi), hp(xi + 1, yi), u), lerp(hp(xi, yi + 1), hp(xi + 1, yi + 1), u), v); };
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const fx = x / S * P, fy = y / S * P;
+    let n = vn(fx, fy) * 0.6 + vn(fx * 2, fy * 2) * 0.3 + vn(fx * 4, fy * 4) * 0.1;   // 周期 P，平铺无缝
+    n = Math.max(0, Math.min(1, 0.5 + n * 0.9));
+    const k = (y * S + x) * 4; data[k] = data[k + 1] = data[k + 2] = Math.round(n * 255); data[k + 3] = 255;
+  }
+  const t = new THREE.DataTexture(data, S, S, THREE.RGBAFormat);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = t.minFilter = THREE.LinearFilter; t.needsUpdate = true;
+  return t;
+})();
+function reflectOnFloor(P) {
+  const G = float(FLOOR_Y);
+  const Pm = vec3(P.x, G.mul(2).sub(P.y), P.z);
+  const k = cameraPosition.y.sub(G).div(max(cameraPosition.y.sub(Pm.y), 0.001));
+  const F = cameraPosition.add(Pm.sub(cameraPosition).mul(k));
+  // 只有地面上方的东西、只在断崖前的地面上才有倒影；越高的东西倒影越淡
+  const vis = smoothstep(G, G.add(0.15), P.y).mul(smoothstep(float(LEDGE_Z + 1.5), float(LEDGE_Z + 4), F.z)).mul(exp(P.y.sub(G).mul(-0.28)));
+  const rip = texture(rippleTex, vec2(F.x.mul(0.22), F.z.mul(0.07).add(time.mul(0.004)))).r;
+  return { F: vec3(F.x, G, F.z), k, vis, rip };
+}
+const REFL_N = Math.floor(COUNT / 4);
+var reflPts, reflRed;
+{
+  const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  mat.fog = false;
+  const PA = positions.toAttribute();
+  const r = reflectOnFloor(PA.xyz);
+  mat.positionNode = r.F;
+  const sz = float(0.09).add(fract(PA.w.mul(17.31)).mul(0.08)).mul(r.k);
+  mat.scaleNode = vec2(sz.mul(1.5), sz.mul(4.5));      // 竖向拉长 = 湿地面的模糊倒影
+  mat.colorNode = Fn(() => {
+    const d = length(uv().sub(0.5)).mul(2);
+    const soft = pow(clamp(float(1).sub(d), 0, 1), 2.2);
+    const a = soft.mul(0.12).mul(r.vis).mul(smoothstep(0.25, 0.7, r.rip)).mul(float(0.7).add(uGlow.mul(0.2)));
+    return vec4(vec3(0.5, 0.62, 0.8).mul(a), a);
+  })();
+  mat.depthTest = PROC;   // v5：倒影粒子是跨在水面上的竖片，下半截会被背景板的水面深度挡住
+  reflPts = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  reflPts.count = REFL_N; reflPts.frustumCulled = false; reflPts.renderOrder = -10; reflPts.name = 'reflFog';
+  scene.add(reflPts);
+}
+{
+  const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  mat.fog = false;
+  const r = reflectOnFloor(redFrom);
+  mat.positionNode = r.F;
+  const sz = float(0.05).add(redSeed.w.mul(0.1)).mul(r.k);
+  mat.scaleNode = vec2(sz.mul(1.6), sz.mul(6.0));
+  mat.colorNode = Fn(() => {
+    const d = length(uv().sub(0.5)).mul(2);
+    const soft = pow(clamp(float(1).sub(d), 0, 1), 2.0);
+    const redI = float(0.3).add(uEyeGlow.mul(1.0)).mul(smoothstep(0.2, 0.6, uEyeOpen));
+    const a = soft.mul(0.16).mul(r.vis).mul(smoothstep(0.3, 0.7, r.rip)).mul(redI);
+    return vec4(vec3(1.0, 0.03, 0.025).mul(a), a);
+  })();
+  mat.depthTest = PROC;
+  reflRed = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  reflRed.count = EYE_RED_N; reflRed.frustumCulled = false; reflRed.renderOrder = -10; reflRed.name = 'reflRed'; reflRed.visible = false;
+  scene.add(reflRed);
+}
+
+// ───────────────────────── 前景岩石剪影（v4）：贴着画面边缘的一层近景黑石，给前/中/后三层纵深 ─────────────────────────
+// 位置按屏幕锚点 + 离相机的距离算（手机竖屏也贴边），放在世界里，相机一动就有真视差。
+var fgRocks = [];
+function layoutForeground() {
+  if (!fgRocks || !fgRocks.length) return;
+  const vFov = THREE.MathUtils.degToRad(camera.fov), aspect = innerWidth / innerHeight;
+  const fwd = new THREE.Vector3().subVectors(CAM_TARGET, camBase).normalize();
+  const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0)).normalize();
+  const up = new THREE.Vector3().crossVectors(right, fwd);
+  for (const r of fgRocks) {
+    const hh = Math.tan(vFov / 2) * r.dist, hw = hh * aspect;
+    r.mesh.position.copy(camBase).addScaledVector(fwd, r.dist).addScaledVector(right, r.sx * hw).addScaledVector(up, r.sy * hh);
+    r.mesh.scale.setScalar(Math.min(hh, hw * 1.25) * r.size);   // 竖屏按宽度缩，免得近景石头吃掉半个屏幕
+  }
+}
+if (PROC) {
+  const mat = new THREE.MeshBasicNodeMaterial();
+  mat.fog = false;
+  mat.colorNode = Fn(() => {
+    // 近乎纯黑；只有朝上、迎光的一侧有一丝冷色湿边
+    const rim = pow(float(1).sub(abs(normalView.z)), 3.0);
+    const upK = clamp(normalView.y.mul(0.6).add(normalView.x.mul(-0.4)), 0, 1);
+    return vec3(0.0015, 0.002, 0.003).add(vec3(0.02, 0.027, 0.04).mul(rim.mul(upK)).mul(float(0.5).add(uGlow.mul(0.3))));
+  })();
+  const rockGeo = (seed, sx, sy, sz) => {
+    const g = new THREE.IcosahedronGeometry(1, 4);
+    const p = g.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      const f = 1 + 0.5 * fbm3(x * 1.3 + seed, y * 1.3, z * 1.3, 4) + 0.16 * Math.abs(fbm3(x * 4 + seed, y * 4, z * 4, 3));
+      p.setXYZ(i, x * f * sx, y * f * sy, z * f * sz);
+    }
+    g.deleteAttribute('uv'); g.deleteAttribute('normal');
+    const gm = mergeVertices(g); gm.computeVertexNormals();
+    return gm;
+  };
+  // [屏幕x, 屏幕y, 距离, 大小, 形状]
+  const spec = [
+    [-1.12, -0.78, 4.2, 0.62, [1.0, 0.75, 0.8]],    // 左下大石
+    [-1.18, 0.2, 5.0, 0.55, [0.55, 1.5, 0.6]],      // 左侧竖石壁
+    [1.15, -0.85, 3.8, 0.58, [1.1, 0.7, 0.8]],      // 右下大石
+    [1.2, 0.55, 5.6, 0.5, [0.5, 1.3, 0.6]],         // 右上石壁
+    [0.42, 1.18, 4.6, 0.42, [1.6, 0.45, 0.7]],      // 顶部垂下的岩檐
+    [0.58, -1.1, 3.4, 0.28, [1.0, 0.55, 0.8]]       // 底部小碎石
+  ];
+  spec.forEach(([sx, sy, dist, size, sh], k) => {
+    const m = new THREE.Mesh(rockGeo(k * 13.7 + 3, ...sh), mat);
+    m.rotation.set(rr(-0.4, 0.4), rr(0, 6.28), rr(-0.3, 0.3));
+    m.renderOrder = 5; m.name = 'fgRock';
+    scene.add(m);
+    fgRocks.push({ mesh: m, sx, sy, dist, size });
+  });
+  layoutForeground();
 }
 
 // ───────────────────────── 蛇形雾气：贴地一掠而过（可有可无） ─────────────────────────
@@ -542,6 +1142,7 @@ let snakeMesh;
   const sd = instancedArray(tArr, 'vec2').toAttribute();
   const tParam = sd.x;
   const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  mat.fog = false;
   mat.positionNode = Fn(() => {
     const s = uSnakeT.sub(tParam.mul(0.35));
     const x = mix(float(-8.5), float(8.5), s);
@@ -565,7 +1166,7 @@ let snakeMesh;
 const pipeline = new THREE.RenderPipeline(renderer);
 const scenePass = pass(scene, camera);
 const sceneColor = scenePass.getTextureNode('output');
-const bloomPass = bloom(sceneColor, 0.7, 0.45, 0.12);
+const bloomPass = bloom(sceneColor, 0.6, 0.45, 0.16);
 pipeline.outputNode = qs.has('nobloom') ? sceneColor : sceneColor.add(bloomPass);
 
 // ───────────────────────── 输入：鼠标 / 触屏 ─────────────────────────
@@ -640,7 +1241,7 @@ let scatter = 0, heavy = 0, eyeOpen = 0, eyeGlow = 0, city = 0, glow = 0.25;
 let snakeT = -1, snakeCooldown = 0;
 const pupil = new THREE.Vector2();
 const camOff = new THREE.Vector2();
-const tmp = new THREE.Vector3();
+const tmp = new THREE.Vector3(), _look = new THREE.Vector3(), _cs = new THREE.Vector3();
 const perfEl = document.getElementById('perf');
 
 const bootT = performance.now(); let fpsN = 0, fpsT0 = bootT;
@@ -696,7 +1297,8 @@ function tick() {
   eyeOpen += (openT - eyeOpen) * (1 - Math.exp(-dt * (openT > eyeOpen ? 3.0 : 2.2)));
   const glowT = THREE.MathUtils.clamp(openT * 0.45 + heavy * 0.6, 0, 1);
   eyeGlow += (glowT - eyeGlow) * (1 - Math.exp(-dt * 2.5));
-  const cityT = THREE.MathUtils.smoothstep(heavy, 0.35, 1.0) * THREE.MathUtils.smoothstep(scatter, 0.4, 0.7);
+  // 城影：只在散到最开、眼睛几乎全睁时浮现；回聚时它先退（退得比眼睛闭得快）
+  const cityT = THREE.MathUtils.smoothstep(heavy, 0.35, 1.0) * THREE.MathUtils.smoothstep(scatter, 0.4, 0.7) * THREE.MathUtils.smoothstep(eyeOpen, 0.7, 0.95);
   city += (cityT - city) * (1 - Math.exp(-dt * (cityT > city ? 1.2 : 4.0)));
   const tx = pointerIn ? THREE.MathUtils.clamp((smoothWorld.x - EYE_POS.x) / (CLOUD_RADIUS * 1.4), -1, 1) : 0;
   const ty = pointerIn ? THREE.MathUtils.clamp((smoothWorld.y - EYE_POS.y) / (CLOUD_RADIUS * 1.2), -1, 1) : 0;
@@ -707,11 +1309,24 @@ function tick() {
   const glowTarget = 0.25 + scatter * 0.95 + heavy * 0.3;
   glow += (glowTarget - glow) * (1 - Math.exp(-dt * 2.0));
 
+  if (qs.has('eyek')) { eyeOpen = +qs.get('eyek'); eyeGlow = eyeOpen; }
+  if (qs.has('cityk')) city = +qs.get('cityk');
   window.__eyeMesh.visible = eyeOpen > 0.015 && !(qs.get('hide') || '').includes('eye');
+  reflRed.visible = eyeRed.visible && eyeOpen > 0.2;
+  window.__cityMesh.visible = city > 0.004;
   uEyeOpen.value = eyeOpen; uEyeGlow.value = eyeGlow; uPupil.value.copy(pupil); uCity.value = city;
   uBreath.value = Math.sin(t * 0.4);
   uHaze.value = 1 - THREE.MathUtils.clamp(scatter * 1.1, 0, 0.9);
   uGlow.value = glow; uScatter.value = scatter;
+
+  // v3：真实灯光与雾随揭示变化（城先退、眼后闭的顺序沿用 city / eyeOpen 的节奏）
+  // v4：灯不再随散开猛涨（以前散开时地面会曝成白色）；只有光柱 + 一点雾团冷辉 + 暗红瞳光
+  const LK = +(qs.get('lk') || 1);
+  shaftLight.intensity = (55 + glow * 10) * LK;
+  cloudLight.intensity = (1.6 + glow * 0.8) * LK;
+  eyeLight.intensity = eyeGlow * eyeOpen * 1.6 * LK;
+  hemi.intensity = 0.18;
+  uFogD.value = THREE.MathUtils.lerp(+(qs.get('fog') || 0.062), 0.042, city);
 
   // 相机呼吸：跟着光标极缓地偏一点，再叠一层很慢的漂移（幅度小，不晕）
   const ptx = pointerIn ? THREE.MathUtils.clamp(smoothWorld.x / (CLOUD_RADIUS * 2), -1, 1) : 0;
@@ -724,7 +1339,12 @@ function tick() {
     camBase.y + camOff.y * dz * 0.03 + Math.sin(t * 0.053 + 1.3) * dz * 0.006,
     camBase.z
   );
-  camera.lookAt(CAM_TARGET);
+  // 视线反向微转一点：相机绕云团小幅环视，近景石头和远处城影的视差拉开
+  _look.copy(CAM_TARGET); _look.x -= camOff.x * 0.25; _look.y -= camOff.y * 0.15;
+  camera.lookAt(_look);
+  camera.updateMatrixWorld();
+  updatePlateNom();
+  _cs.copy(CLOUD_CENTER).project(camera);
 
   // 蛇形雾气：眼睛睁到最大时偶尔贴地掠过一次
   snakeCooldown -= dt;
@@ -742,7 +1362,7 @@ function tick() {
   // 自适应降档：开场 2.5 秒后测帧率，太低就少画一半粒子、像素比降到 1（深度分层和地雾保留）
   if (now - bootT > 2500) { perfN++; perfT += rawDt; }
   if (degraded === false && perfT > 3) {
-    if (perfN / perfT < 32) { degraded = true; pts.count = Math.floor(COUNT / 2); frame(); }
+    if (perfN / perfT < 32) { degraded = true; pts.count = Math.floor(COUNT / 2); reflPts.count = Math.floor(REFL_N / 2); eyeBlack.count = Math.floor(EYE_N / 2); eyeRed.count = reflRed.count = Math.floor(EYE_RED_N / 2) ; uEyeSize.value = Math.SQRT2; frame(); }
     perfN = 0; perfT = 0; if (degraded === false && ++perfChecks > 2) degraded = 'ok';
   }
   fpsN++;
@@ -750,7 +1370,7 @@ function tick() {
     __fps = fpsN * 1000 / (now - fpsT0); fpsN = 0; fpsT0 = now;
     perfEl.textContent = `${pts.count} 粒子 · ${Math.round(__fps)} fps`;
   }
-  window.__xushu = { fps: Math.round(__fps), degraded, drawn: pts.count, scatter, heavy, eyeOpen, city, glow, active: uActive.value, backend: renderer.backend.isWebGPUBackend ? 'webgpu' : 'webgl2', count: COUNT };
+  window.__xushu = { fps: Math.round(__fps), degraded, drawn: pts.count, scatter, heavy, eyeOpen, city, glow, active: uActive.value, backend: renderer.backend.isWebGPUBackend ? 'webgpu' : 'webgl2', count: COUNT, eyeN: eyeBlack.count, cs: [(_cs.x * 0.5 + 0.5) * innerWidth, (-_cs.y * 0.5 + 0.5) * innerHeight] };
 }
 for (const h of (qs.get('hide') || '').split(',').filter(Boolean)) { const o = scene.getObjectByName(h); if (o && o !== scene) o.visible = false; }
 renderer.setAnimationLoop(tick);
