@@ -29,6 +29,18 @@
   #reset { all: unset; cursor: pointer; display: block; margin: 2px 0 6px; color: rgba(190,200,212,.4); font-size: 10px; }
   #reset:hover { color: rgba(220,228,238,.75); }
   #err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 24px; color: rgba(190,200,212,.6); font-size: 13px; line-height: 1.8; }
+  /* v9 鬼洞纹装饰图标（无功能）+ 拨雾范围调节（细长十字 = 放大，双横线 = 缩小） */
+  .glyphs { position: fixed; display: flex; flex-direction: column; gap: 22px; z-index: 2; color: rgba(186,196,210,.26); pointer-events: none; user-select: none; }
+  .glyphs svg { width: 30px; height: 30px; display: block; }
+  #glyphTL { left: calc(28px + env(safe-area-inset-left)); top: calc(26px + env(safe-area-inset-top)); }
+  #glyphBR { right: calc(26px + env(safe-area-inset-right)); bottom: calc(34px + env(safe-area-inset-bottom)); }
+  #brush { position: fixed; left: calc(28px + env(safe-area-inset-left)); top: 50%; transform: translateY(-50%); z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 18px; }
+  #brush button { all: unset; cursor: pointer; display: block; width: 30px; color: rgba(186,196,210,.3); transition: color .3s; -webkit-tap-highlight-color: transparent; }
+  #brush button:hover, #brush button:focus-visible { color: rgba(222,230,240,.7); }
+  #brush svg { display: block; width: 30px; overflow: visible; }
+  #brushRing { position: fixed; left: 0; top: 0; border: 1px solid rgba(200,210,224,.35); border-radius: 50%; pointer-events: none; opacity: 0; transform: translate(-50%, -50%); transition: opacity .9s; z-index: 2; }
+  #brushRing.on { opacity: 1; transition: opacity .1s; }
+  @media (max-width: 600px) { .glyphs svg, #brush button, #brush svg { width: 24px; height: auto; } .glyphs { gap: 16px; } #glyphBR { bottom: calc(92px + env(safe-area-inset-bottom)); } }
 </style>
 <script type="importmap">
 {
@@ -50,6 +62,10 @@
   <div id="sliders" class="hidden"></div>
 </div>
 <div id="err"></div>
+<div class="glyphs" id="glyphTL"><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="32" cy="32" r="17"/><line x1="54.00" y1="32.00" x2="58.00" y2="32.00"/><line x1="53.25" y1="37.69" x2="55.67" y2="38.34"/><line x1="51.05" y1="43.00" x2="53.22" y2="44.25"/><line x1="47.56" y1="47.56" x2="49.32" y2="49.32"/><line x1="43.00" y1="51.05" x2="44.25" y2="53.22"/><line x1="37.69" y1="53.25" x2="38.34" y2="55.67"/><line x1="32.00" y1="54.00" x2="32.00" y2="58.00"/><line x1="26.31" y1="53.25" x2="25.66" y2="55.67"/><line x1="21.00" y1="51.05" x2="19.75" y2="53.22"/><line x1="16.44" y1="47.56" x2="14.68" y2="49.32"/><line x1="12.95" y1="43.00" x2="10.78" y2="44.25"/><line x1="10.75" y1="37.69" x2="8.33" y2="38.34"/><line x1="10.00" y1="32.00" x2="6.00" y2="32.00"/><line x1="10.75" y1="26.31" x2="8.33" y2="25.66"/><line x1="12.95" y1="21.00" x2="10.78" y2="19.75"/><line x1="16.44" y1="16.44" x2="14.68" y2="14.68"/><line x1="21.00" y1="12.95" x2="19.75" y2="10.78"/><line x1="26.31" y1="10.75" x2="25.66" y2="8.33"/><line x1="32.00" y1="10.00" x2="32.00" y2="6.00"/><line x1="37.69" y1="10.75" x2="38.34" y2="8.33"/><line x1="43.00" y1="12.95" x2="44.25" y2="10.78"/><line x1="47.56" y1="16.44" x2="49.32" y2="14.68"/><line x1="51.05" y1="21.00" x2="53.22" y2="19.75"/><line x1="53.25" y1="26.31" x2="55.67" y2="25.66"/></svg><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="32" cy="32" r="22"/><ellipse cx="32" cy="32" rx="3.5" ry="13"/><circle cx="32" cy="32" r="0.9" fill="currentColor"/></svg><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="14,16 50,16 32,46"/><line x1="32" y1="16" x2="32" y2="34"/><circle cx="32" cy="52" r="1.6" fill="currentColor"/></svg></div>
+<div class="glyphs" id="glyphBR"><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M54.00 32.00 L53.61 34.96 L52.84 37.82 L51.69 40.52 L50.19 43.02 L48.38 45.27 L46.31 47.24 L44.00 48.89 L41.51 50.20 L38.89 51.15 L36.19 51.73 L33.46 51.93 L30.76 51.76 L28.12 51.23 L25.61 50.35 L23.26 49.15 L21.12 47.66 L19.22 45.90 L17.59 43.92 L16.26 41.76 L15.25 39.46 L14.57 37.06 L14.23 34.62 L14.22 32.19 L14.54 29.79 L15.18 27.49 L16.11 25.32 L17.32 23.32 L18.78 21.52 L20.45 19.96 L22.30 18.65 L24.29 17.62 L26.38 16.88 L28.52 16.43 L30.68 16.29 L32.82 16.44 L34.89 16.87 L36.85 17.58 L38.68 18.53 L40.35 19.72 L41.81 21.10 L43.06 22.65 L44.07 24.34 L44.84 26.12 L45.34 27.97 L45.58 29.85 L45.56 31.72 L45.29 33.54 L44.79 35.28 L44.05 36.92 L43.11 38.42 L42.00 39.75 L40.72 40.91 L39.32 41.86 L37.83 42.60 L36.27 43.13 L34.68 43.42 L33.09 43.50 L31.52 43.36 L30.02 43.01 L28.60 42.46 L27.29 41.74 L26.12 40.86 L25.09 39.84 L24.23 38.71 L23.54 37.49 L23.04 36.22 L22.73 34.91 L22.60 33.59 L22.65 32.29 L22.88 31.04 L23.28 29.86 L23.82 28.76 L24.49 27.77 L25.28 26.90 L26.17 26.17 L27.12 25.57 L28.13 25.13 L29.17 24.84 L30.21 24.70 L31.23 24.71 L32.22 24.85 L33.16 25.13 L34.03 25.53 L34.81 26.03 L35.49 26.62 L36.07 27.28 L36.54 28.00 L36.89 28.75 L37.12 29.53 L37.23 30.30 L37.23 31.06 L37.13 31.79 L36.93 32.47 L36.64 33.09 L36.28 33.64 L35.86 34.12 L35.39 34.51 L34.88 34.82 L34.36 35.04 L33.83 35.18 L33.32 35.23 L32.82 35.20 L32.36 35.10 L31.94 34.93 L31.57 34.72 L31.26 34.46 L31.01 34.17 L30.82 33.86 L30.70 33.54 L30.64 33.23 L30.64 32.93 L30.69 32.65 L30.78 32.41 L30.92 32.21 L31.08 32.05 L31.27 31.94 L31.46 31.88 L31.66 31.87 L31.84 31.91 L32.00 32.00"/><circle cx="32" cy="32" r="1.6" fill="currentColor"/></svg><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="32,28 22,22 11,25 4,36"/><polyline points="32,28 42,22 53,25 60,36"/><polyline points="32,28 24,31 16,40"/><polyline points="32,28 40,31 48,40"/><polygon points="32,24 35,32 32,40 29,32"/></svg><svg viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="32" cy="32" r="22"/><path d="M10.00 32.00 L12.40 34.97 L14.80 37.51 L17.20 39.27 L19.60 39.99 L22.00 39.57 L24.40 38.07 L26.80 35.71 L29.20 32.81 L31.60 29.80 L34.00 27.11 L36.40 25.11 L38.80 24.09 L41.20 24.21 L43.60 25.43 L46.00 27.59 L48.40 30.39 L50.80 33.41 L53.20 36.23 L55.60 38.45 L58.00 39.74 L60.40 39.94 L62.80 39.00 L65.20 37.06 L67.60 34.40 L70.00 31.40 L72.40 28.48 L74.80 26.07 L77.20 24.50 L79.60 24.00 L82.00 24.65 L84.40 26.34 L86.80 28.84 L89.20 31.79 L91.60 34.77 L94.00 37.36 L96.40 39.18 L98.80 39.98 L101.20 39.64 L103.60 38.21 L106.00 35.89"/></svg></div>
+<div id="brush"><button id="brushUp" title="拨雾范围 +" aria-label="拨雾范围变大"><svg viewBox="0 0 30 52" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"><line x1="15" y1="1" x2="15" y2="51"/><line x1="4" y1="28" x2="26" y2="28"/></svg></button><button id="brushDn" title="拨雾范围 −" aria-label="拨雾范围变小"><svg viewBox="0 0 30 12" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"><line x1="3" y1="2" x2="27" y2="2"/><line x1="6" y1="10" x2="24" y2="10"/></svg></button></div>
+<div id="brushRing"></div>
 
 <script type="module">
 import * as THREE from 'three/webgpu';
@@ -1245,6 +1261,24 @@ const reset = document.createElement('button'); reset.id = 'reset'; reset.textCo
 reset.onclick = () => { Object.assign(params, DEFAULTS); for (const k in inputs) { inputs[k].inp.value = params[k]; inputs[k].show(); } applyParams(); };
 slidersEl.appendChild(reset);
 toggle.onclick = () => { const h = slidersEl.classList.toggle('hidden'); toggle.textContent = h ? '手感 ▾' : '手感 ▴'; };
+// v9：左侧的细长十字 / 双横线调拨雾范围（就是「斥力半径」滑杆），按一下在光标处闪一圈当前范围；键盘 + / - 也行
+const brushRing = document.getElementById('brushRing'); let ringTimer = 0, lastPX = innerWidth * 0.4, lastPY = innerHeight * 0.35;
+canvas.addEventListener('pointermove', e => { lastPX = e.clientX; lastPY = e.clientY; }, { passive: true });
+function nudgeRadius(dir) {
+  const s = SLIDERS.find(q => q.key === 'radius');
+  params.radius = Math.min(s.max, Math.max(s.min, +(params.radius + dir * 0.1).toFixed(2)));
+  inputs.radius.inp.value = params.radius; inputs.radius.show(); applyParams();
+  const dist = camera.position.distanceTo(EYE_POS);
+  const px = params.radius * CLOUD_RADIUS / (dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) * innerHeight / 2;
+  Object.assign(brushRing.style, { width: px * 2 + 'px', height: px * 2 + 'px', left: lastPX + 'px', top: lastPY + 'px' });
+  brushRing.classList.add('on'); clearTimeout(ringTimer); ringTimer = setTimeout(() => brushRing.classList.remove('on'), 650);
+}
+for (const [id, d] of [['brushUp', 1], ['brushDn', -1]]) {
+  const b = document.getElementById(id);
+  b.addEventListener('pointerdown', e => e.stopPropagation());
+  b.addEventListener('click', e => { e.stopPropagation(); nudgeRadius(d); });
+}
+addEventListener('keydown', e => { if (e.key === '+' || e.key === '=') nudgeRadius(1); else if (e.key === '-' || e.key === '_') nudgeRadius(-1); });
 function applyParams() {
   uK.value = params.stiffness; uC.value = params.damping;
   uRadius.value = params.radius * CLOUD_RADIUS;
