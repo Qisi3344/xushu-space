@@ -853,7 +853,23 @@ async function buildPlate(v) {
   mat.fog = false;
   mat.colorNode = Fn(() => {
     const st = uv();
-    const cave = texture(caveTex, st).rgb;
+    const cave0 = texture(caveTex, st).rgb;
+    // v11.1：左侧石壁退到背景——高频龟裂纹先糊一半（5 点小模糊），再整体压到约 45%，叠一点偏冷的暗色（不用纯黑，免得脏）
+    const leftM = (LOW ? smoothstep(0.47, 0.33, st.x).mul(smoothstep(0.30, 0.42, st.y)) : float(0)).toVar();
+    const bo = float(0.0022);
+    const blur = cave0.add(texture(caveTex, st.add(vec2(bo, 0))).rgb).add(texture(caveTex, st.sub(vec2(bo, 0))).rgb)
+      .add(texture(caveTex, st.add(vec2(0, bo.mul(2)))).rgb).add(texture(caveTex, st.sub(vec2(0, bo.mul(2)))).rgb).mul(0.2);
+    const soft = mix(cave0, blur, 0.55);
+    // 去大面积高光：亮部往下收（哑光），暗部基本不动
+    const lumL = dot(soft, vec3(0.3, 0.6, 0.1));
+    const matte = soft.div(float(1).add(lumL.mul(6.0)));
+    const leftC = matte.mul(0.45).add(vec3(0.0006, 0.0009, 0.0016));
+    // v11.2：贴近水面的一条带保留潮湿感——这里少压暗、不做哑光，原本的湿亮高光再提一点（偏冷），往上渐退
+    const wy = positionWorld.y;
+    const wetBand = smoothstep(GROUND_Y + 1.1, GROUND_Y + 0.12, wy).mul(smoothstep(GROUND_Y - 0.02, GROUND_Y + 0.08, wy));
+    const cave = mix(cave0, leftC, leftM.mul(float(1).sub(wetBand.mul(0.7)))).toVar();
+    const lw = dot(cave0, vec3(0.3, 0.6, 0.1));
+    cave.addAssign(cave0.mul(vec3(0.75, 0.85, 1.0)).mul(smoothstep(0.006, 0.06, lw)).mul(wetBand).mul(0.55));
     const cC = pow(texture(cityTex, vec2(st.x, st.y.mul(0.5).add(0.5))).rgb, vec3(2.2));
     const cA = texture(cityTex, vec2(st.x, st.y.mul(0.5))).r;
     const k = uCity;
