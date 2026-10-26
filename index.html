@@ -57,7 +57,7 @@ import {
   Fn, instancedArray, instanceIndex, uniform, float, vec2, vec3, vec4,
   uv, length, normalize, max, min, clamp, mix, smoothstep, sin, cos, atan, abs, pow,
   exp, fract, hash, time, texture, pass, fog, positionView, positionWorld, normalView, attribute,
-  cameraPosition, dot, cross, sqrt, dFdx, dFdy
+  cameraPosition, dot, cross, sqrt, dFdx, dFdy, floor, step
 } from 'three/tsl';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
@@ -69,8 +69,10 @@ const CLOUD_RADIUS = 2.2;          // 云团半径（世界单位）
 const CLOUD_CENTER = new THREE.Vector3(0, 0, 0);       // 云团略下移，坐在地雾上
 const GROUND_Y = -CLOUD_RADIUS * 1.18;                  // 地面高度
 const MOUTH = new THREE.Vector2(0, 0.85);               // 洞口在云团后上方
-const EYE_POS = new THREE.Vector3(0, 0.12, -1.7);       // 妖瞳：藏在云团后面
-const EYE_R = 0.82;
+const EYE_POS = new THREE.Vector3(0, 0, 0);             // v6：眼球就是粒子团本身，球心 = 云心
+const EYE_R = +(new URLSearchParams(location.search).get('eyer') || 1.3);
+// v6 粒子分工（每颗粒子的 home.w = 类型 + 随机种子）：0 = 外圈薄雾，1 = 黑眼球表面，2 = 红竖瞳，3 = 竖瞳红晕
+const FRAC_SPHERE = 0.5, FRAC_RED = 0.075;
 
 // 深度分层的量化比例（近 / 远）：大小约 2.5 倍、亮度约 3.3 倍
 const DEPTH_SIZE = [0.5, 1.25];
@@ -167,18 +169,40 @@ const uScatter   = uniform(0);
 // WebGL2 回退时 transform feedback 最多 4 路，所以只用 3 个 buffer：home(xyz)+seed(w)、位置、速度(xyz)+偏离度(w)
 const homeArr = new Float32Array(COUNT * 4);
 const posArr  = new Float32Array(COUNT * 4);
-for (let i = 0; i < COUNT; i++) {
-  let x, y, z, l;
-  do { x = Math.random() * 2 - 1; y = Math.random() * 2 - 1; z = Math.random() * 2 - 1; l = x * x + y * y + z * z; } while (l > 1 || l < 1e-4);
-  const n = Math.sqrt(l);
-  let r = Math.pow(Math.random(), 0.62);
-  if (Math.random() < 0.08) r = 1.0 + Math.random() * 0.25; // 边缘游丝
-  r *= CLOUD_RADIUS;
-  // 真球体：z 不再压扁，前后层次靠深度分层读出来
-  homeArr[i * 4]     = posArr[i * 4]     = x / n * r * 1.03 + CLOUD_CENTER.x;
-  homeArr[i * 4 + 1] = posArr[i * 4 + 1] = y / n * r * 0.95 + CLOUD_CENTER.y;
-  homeArr[i * 4 + 2] = posArr[i * 4 + 2] = z / n * r * 1.0 + CLOUD_CENTER.z;
-  homeArr[i * 4 + 3] = posArr[i * 4 + 3] = Math.random();
+{
+  // 类型随机打散在下标里：降档只画前一半时，眼球 / 竖瞳 / 薄雾的比例不变
+  const types = new Uint8Array(COUNT);
+  for (let i = 0; i < COUNT; i++) { const u = Math.random(); types[i] = u < FRAC_SPHERE ? 1 : u < FRAC_SPHERE + FRAC_RED ? (Math.random() < 0.12 ? 3 : 2) : 0; }
+  const sphIdx = []; for (let i = 0; i < COUNT; i++) if (types[i] === 1) sphIdx.push(i);
+  // 黑眼球：斐波那契球面，朝相机的那面铺到后方 ~105°，薄薄一层壳
+  const NS = sphIdx.length, zMin = -0.28, ga = Math.PI * (3 - Math.sqrt(5));
+  const set = (i, x, y, z, t) => { homeArr[i * 4] = posArr[i * 4] = x + EYE_POS.x; homeArr[i * 4 + 1] = posArr[i * 4 + 1] = y + EYE_POS.y; homeArr[i * 4 + 2] = posArr[i * 4 + 2] = z + EYE_POS.z; homeArr[i * 4 + 3] = posArr[i * 4 + 3] = t + Math.random() * 0.998; };
+  for (let k = 0; k < NS; k++) {
+    const zz = 1 - (k + 0.5) / NS * (1 - zMin), r2 = Math.sqrt(1 - zz * zz), th = k * ga;
+    const r = EYE_R * (0.975 + Math.random() * 0.025);
+    set(sphIdx[k], Math.cos(th) * r2 * r, Math.sin(th) * r2 * r, zz * r, 1);
+  }
+  for (let i = 0; i < COUNT; i++) {
+    const t = types[i];
+    if (t === 1) continue;
+    if (t >= 2) {
+      // 竖瞳：贴在球面正前方的一道细长裂缝，中间宽、两头尖，中心更密
+      const u = Math.random() * 2 - 1, yU = Math.sign(u) * Math.pow(Math.abs(u), 0.85);
+      const side = (Math.random() + Math.random() + Math.random()) / 1.5 - 1;
+      const halfW = (t === 3 ? 0.11 : 0.07) * EYE_R * Math.pow(Math.max(0, 1 - yU * yU), 1.3);
+      const lx = side * halfW, ly = yU * EYE_R * 0.86;
+      const lz = Math.sqrt(Math.max(EYE_R * EYE_R - lx * lx - ly * ly, 0)) + EYE_R * 0.03;
+      set(i, lx, ly, lz, t);
+      continue;
+    }
+    // 外圈薄雾：从球面外一点到原来的云团边缘，越往外越稀，少量游丝飘得更远
+    let x, y, z, l;
+    do { x = Math.random() * 2 - 1; y = Math.random() * 2 - 1; z = Math.random() * 2 - 1; l = x * x + y * y + z * z; } while (l > 1 || l < 1e-4);
+    const n = Math.sqrt(l);
+    let r = EYE_R * 1.06 + Math.pow(Math.random(), 1.7) * (CLOUD_RADIUS * 1.02 - EYE_R * 1.06);
+    if (Math.random() < 0.08) r = CLOUD_RADIUS * (1.0 + Math.random() * 0.25);
+    set(i, x / n * r * 1.03, y / n * r * 0.95, z / n * r, 0);
+  }
 }
 const homes      = instancedArray(homeArr, 'vec4');
 const positions  = instancedArray(posArr, 'vec4');
@@ -191,7 +215,10 @@ const computeUpdate = Fn(() => {
   const V = velocities.element(i);
   const pos = P.xyz.toVar();
   const vel = V.xyz.toVar();
-  const seed = vec4(homes.element(i).w, hash(i), hash(i.add(11371)), hash(i.add(29501)));
+  const hw = homes.element(i).w;
+  const typ = floor(hw);
+  const seed = vec4(fract(hw), hash(i), hash(i.add(11371)), hash(i.add(29501)));
+  const isMist = float(1).sub(step(0.5, typ)), isRed = step(1.5, typ);
   const dt = uDt;
 
   // 呼吸：回家位置随时间极缓地起伏、微转
@@ -203,7 +230,9 @@ const computeUpdate = Fn(() => {
     sin(time.mul(0.27).add(h0.z.mul(1.1)).add(ph.mul(1.3))).mul(0.035),
     sin(time.mul(0.23).add(h0.x.mul(1.2))).mul(0.03)
   );
-  const home = h0.mul(breathe).add(wob).add(uCenter);
+  // 眼球和竖瞳只微微晃（保持形状干净），薄雾照旧飘；竖瞳跟着光标转一点
+  const look = vec3(uPupil.x.mul(EYE_R * 0.2), uPupil.y.mul(EYE_R * 0.06), 0).mul(isRed);
+  const home = h0.mul(breathe).add(wob.mul(mix(float(0.25), float(1), isMist))).add(look).add(uCenter);
 
   // 弹簧（欠阻尼）：a = k(home - p) - c v
   const toHome = home.sub(pos);
@@ -238,7 +267,7 @@ const computeUpdate = Fn(() => {
 
   const v = vel.add(acc.mul(dt)).mul(0.992).toVar();
   V.assign(vec4(v, offN));
-  P.assign(vec4(pos.add(v.mul(dt)), seed.x));
+  P.assign(vec4(pos.add(v.mul(dt)), hw));
 })().compute(COUNT);
 
 // ───────────────────────── 小工具：噪声（只在 CPU 上烘几何时用一次） ─────────────────────────
@@ -766,6 +795,9 @@ async function buildPlate(v) {
     const cA = texture(cityTex, vec2(st.x, st.y.mul(0.5))).r;
     const k = uCity;
     const col = cave.mul(float(1).sub(cA.mul(k))).add(cC.mul(k)).toVar();
+    // v6：城影所在那一条横带后面的雾提亮一点（冷色），城的剪影才读得出来；城本身不提亮
+    const band = smoothstep(0.5, 0.64, st.y).mul(smoothstep(0.99, 0.86, st.y));
+    col.addAssign(cave.mul(1.3).add(vec3(0.0016, 0.0024, 0.0042)).mul(band.mul(k).mul(float(1).sub(cA))));
     // 断层处的膜：视差（像素）≈ 相机离出图位置的平移 × 逆深度落差 ÷ 每像素角度；拉开越多越暗，读成岩石边的阴影
     const gapPx = attribute('gap', 'float').mul(length(cameraPosition.sub(uPlateO))).div(uPlateNom);
     col.mulAssign(mix(float(1), float(0.15), smoothstep(16.0, 40.0, gapPx)));
@@ -775,7 +807,7 @@ async function buildPlate(v) {
     col.addAssign(cave.mul(lit).add(vec3(0.0025, 0.0035, 0.0055).mul(lit)));
     // 妖瞳睁开时极弱的暗红只渗到眼睛后下方的水面
     const de = length(positionWorld.sub(vec3(EYE_POS.x, GROUND_Y, EYE_POS.z)));
-    col.addAssign(vec3(0.02, 0.0006, 0.0005).mul(exp(de.mul(de).mul(-0.12))).mul(uEyeGlow.mul(uEyeOpen)));
+    col.addAssign(vec3(0.02, 0.0006, 0.0005).mul(exp(de.mul(de).mul(-0.12))).mul(float(0.25).add(uEyeGlow)));
     return col.mul(uPlateGain);
   })();
   const m = new THREE.Mesh(geo, mat);
@@ -827,112 +859,40 @@ mistLayer(GROUND_N, () => [(Math.random() * 2 - 1) * 7.5, LEDGE_Z + 1 + Math.ran
 if (PROC && !qs.has('nochasm')) mistLayer(isMobile ? 260 : 480, () => [(Math.random() * 2 - 1) * 15, -16 - Math.random() * 18], CHASM_Y + 3, 5.5, 2.6, 3.5, 0.016, 30, 'chasmfog',
   () => float(0.4).add(uCity.mul(1.1)));
 
-// ───────────────────────── 妖瞳（v4）：独立的粒子眼 ─────────────────────────
-// 不进雾的 compute（WebGL2 回退的 storage / varying 上限），位置在顶点阶段解析算出：
-// 每颗粒子从云团里一个随机点，随 eyeOpen 汇到眼球球面（朝相机的半球）上；闭眼时散回云里。
-// 黑球用普通混合（加法混合的黑色是看不见的）+ 写深度，靠身后的亮雾和一圈冷色逆光读出球形轮廓；
-// 红色竖瞳是另一批加法发光粒子，跟着 uPupil 偏移。不受鼠标斥力影响。
-const EYE_N = +qs.get('eyen') || (isMobile ? 7000 : 12000);
-const EYE_RED_N = Math.round(EYE_N * 0.2);
-const uEyeSize = uniform(1);          // 降档时少画一半，颗粒放大 √2 补满球面
-var eyeBlack, eyeRed, eyeHalo;
-function randInCloud() {
-  let x, y, z, l; do { x = Math.random() * 2 - 1; y = Math.random() * 2 - 1; z = Math.random() * 2 - 1; l = x * x + y * y + z * z; } while (l > 1);
-  const r = CLOUD_RADIUS * 0.85; return [x * r + CLOUD_CENTER.x, y * r * 0.95 + CLOUD_CENTER.y, z * r + CLOUD_CENTER.z];
-}
-const eyeEase = t => t.mul(t).mul(float(3).sub(t.mul(2)));
-function eyeFlight(fromA, targetP, seed, delay, spread) {
-  // 先迟后早：每颗粒子的出发时间不同，散回去时反过来
-  // eyeOpen≈0.05 开始有粒子归位，≈0.7 全部归位；半睁时是一颗残缺的球
-  const t = clamp(uEyeOpen.sub(0.05).sub(delay.mul(spread)).div(0.65 - spread), 0, 1);
-  const e = eyeEase(t);
-  const drift = vec3(sin(time.mul(0.41).add(seed.mul(31.0))), sin(time.mul(0.37).add(seed.mul(17.0))), sin(time.mul(0.29).add(seed.mul(53.0)))).mul(0.18);
-  const from = fromA.add(drift);
-  // 飞行途中绕眼睛打一个旋，像墨被吸进去
-  const toT = targetP.sub(from);
-  const side = normalize(cross(toT, vec3(0, 0, 1)).add(vec3(0.0001, 0, 0))).mul(sin(e.mul(3.14159)).mul(0.55).mul(seed.sub(0.5)));
-  return { t, pos: mix(from, targetP, e).add(side) };
-}
+// ───────────────────────── 妖瞳（v6）：眼球就是那团粒子 ─────────────────────────
+// 一半粒子的家在球面上：这里用普通混合 + 写深度把它们画成黑色墨粒（加法混合画不出黑），
+// 鼠标搅过的地方墨粒被推开，露出后面的雾和洞；松手后弹簧把它们拉回球面。红竖瞳和薄雾在 pts 里用加法混合画。
+const uEyeSize = uniform(1);          // 降档时少画一半，墨粒放大 √2 补满球面
+var eyeBlack, eyeHalo;
 {
-  // 黑眼球：斐波那契半球（+z 朝相机，多铺到 100°，让轮廓边缘也是满的），再打乱顺序，降档时取前一半依旧均匀
-  const fromArr = new Float32Array(EYE_N * 4), dirArr = new Float32Array(EYE_N * 4);
-  const order = [...Array(EYE_N).keys()].sort(() => Math.random() - 0.5);
-  const zMin = -0.2, ga = Math.PI * (3 - Math.sqrt(5));
-  for (let k = 0; k < EYE_N; k++) {
-    const i = order[k];
-    const zz = 1 - (k + 0.5) / EYE_N * (1 - zMin);
-    const rr2 = Math.sqrt(1 - zz * zz), th = k * ga;
-    const f = randInCloud();
-    fromArr.set([f[0], f[1], f[2], Math.random()], i * 4);
-    dirArr.set([Math.cos(th) * rr2, Math.sin(th) * rr2, zz, Math.random()], i * 4);
-  }
-  const FA = instancedArray(fromArr, 'vec4').toAttribute();
-  const DA = instancedArray(dirArr, 'vec4').toAttribute();
-  const dir = DA.xyz;
-  const target = vec3(EYE_POS.x, EYE_POS.y, EYE_POS.z).add(dir.mul(EYE_R).mul(float(1).add(sin(time.mul(0.6)).mul(0.004))));
-  const fl = eyeFlight(FA.xyz, target, DA.w, FA.w, 0.3);
+  const PA = positions.toAttribute();
+  const VA = velocities.toAttribute();
+  const HA = homes.toAttribute();
+  const typ = floor(PA.w), sd = fract(PA.w);
+  const isSph = float(1).sub(step(0.5, abs(typ.sub(1))));
+  const dir = normalize(HA.xyz.sub(vec3(EYE_POS.x, EYE_POS.y, EYE_POS.z)));
+  const disp = VA.w;
+  const NS = Math.max(1, Math.round(COUNT * FRAC_SPHERE));
+  const baseS = 2 * Math.sqrt(2 * Math.PI * 1.28 * EYE_R * EYE_R / NS) * 1.05;
   const mat = new THREE.SpriteNodeMaterial({ transparent: false, depthWrite: true, alphaTest: 0.5 });
   mat.fog = false;
-  mat.positionNode = fl.pos;
-  const baseS = 2.15 * EYE_R / Math.sqrt(EYE_N) * 1.9;
-  mat.scaleNode = float(baseS).mul(uEyeSize).mul(float(0.85).add(DA.w.mul(0.3))).mul(smoothstep(0.3, 0.8, fl.t));   // 刚出发的墨粒是隐形的，快到球面才显形，免得在云里留下一块灰
+  mat.positionNode = PA.xyz;
+  mat.scaleNode = float(baseS).mul(uEyeSize).mul(float(0.85).add(sd.mul(0.3))).mul(float(1).sub(clamp(disp.mul(1.2), 0, 0.6))).mul(isSph);
   mat.colorNode = Fn(() => {
     const d = length(uv().sub(0.5)).mul(2);
-    const toCam = normalize(cameraPosition.sub(target));
+    const toCam = normalize(cameraPosition.sub(HA.xyz));
     const facing = clamp(dot(dir, toCam), 0, 1);
     const rim = pow(float(1).sub(facing), 3.0);
-    // 迎着光柱（左上方）的一侧边缘略亮；其余漆黑
     const lit = clamp(dot(dir, normalize(vec3(-0.5, 0.75, 0.3))), 0, 1);
-    const hl = smoothstep(0.985, 0.998, dot(dir, normalize(vec3(-0.32, 0.4, 0.86)))).mul(0.22).mul(float(0.3).add(uEyeGlow.mul(0.7)));
-    const settled = smoothstep(0.85, 1.0, fl.t);
-    const col = vec3(0.003, 0.004, 0.006)
-      .add(vec3(0.42, 0.55, 0.75).mul(rim.mul(float(0.10).add(lit.mul(0.25))).mul(float(0.5).add(uGlow.mul(0.4)))).mul(settled))
-      .add(vec3(0.7, 0.8, 0.95).mul(hl).mul(settled))
-      .add(vec3(0.012, 0.014, 0.02).mul(float(1).sub(settled)));   // 还在飞的墨粒带一点灰，不然在黑处看不见轨迹
+    const home = float(1).sub(clamp(disp.mul(2.5), 0, 1));     // 在球面上 = 1，被搅出去 = 0
+    const col = vec3(0.0025, 0.003, 0.0045)
+      .add(vec3(0.42, 0.55, 0.75).mul(rim.mul(float(0.12).add(lit.mul(0.3))).mul(float(0.55).add(uGlow.mul(0.4)))).mul(home))
+      .add(vec3(0.016, 0.018, 0.026).mul(float(1).sub(home)));   // 甩出去的墨粒带一点灰，在黑处也看得见轨迹
     return vec4(col, smoothstep(1.0, 0.7, d));
   })();
   eyeBlack = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-  eyeBlack.count = EYE_N; eyeBlack.frustumCulled = false; eyeBlack.name = 'eye'; eyeBlack.visible = false;
+  eyeBlack.count = COUNT; eyeBlack.frustumCulled = false; eyeBlack.renderOrder = -1; eyeBlack.name = 'eye';
   scene.add(eyeBlack);
-}
-// 红色竖瞳：一道细长锋利的裂缝，粒子贴在球面前方一点点
-var redTarget, redFrom, redSeed;
-{
-  const fromArr = new Float32Array(EYE_RED_N * 4), slitArr = new Float32Array(EYE_RED_N * 4);
-  for (let i = 0; i < EYE_RED_N; i++) {
-    const f = randInCloud();
-    fromArr.set([f[0], f[1], f[2], Math.random()], i * 4);
-    const u = (Math.random() * 2 - 1);
-    const yU = Math.sign(u) * Math.pow(Math.abs(u), 0.85);
-    const side = (Math.random() + Math.random() + Math.random()) / 1.5 - 1;   // 中心更密，边缘稀
-    slitArr.set([yU, side, Math.random(), Math.random() < 0.12 ? 1 : 0], i * 4);
-  }
-  const FA = instancedArray(fromArr, 'vec4').toAttribute();
-  const SA = instancedArray(slitArr, 'vec4').toAttribute();
-  const yy = SA.x, side = SA.y;
-  const halfW = mix(float(0.01), float(0.075), uEyeOpen).mul(pow(clamp(float(1).sub(yy.mul(yy)), 0, 1), 1.3)).mul(EYE_R);
-  const lx = side.mul(halfW).add(uPupil.x.mul(EYE_R * 0.22));
-  const ly = yy.mul(EYE_R * 0.86).add(uPupil.y.mul(EYE_R * 0.06));
-  const lz = sqrt(max(float(EYE_R * EYE_R).sub(lx.mul(lx)).sub(ly.mul(ly)), 0.0)).add(EYE_R * 0.02);
-  const target = vec3(EYE_POS.x, EYE_POS.y, EYE_POS.z).add(vec3(lx, ly, lz));
-  const fl = eyeFlight(FA.xyz, target, SA.z, FA.w, 0.25);
-  redTarget = target; redFrom = fl.pos; redSeed = SA;
-  const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
-  mat.fog = false;
-  mat.positionNode = fl.pos;
-  const glowP = SA.w;   // 12% 是大号柔光粒，给裂缝一层红晕
-  mat.scaleNode = mix(float(0.022), float(0.11), glowP).mul(float(0.8).add(SA.z.mul(0.4))).mul(smoothstep(0.15, 0.6, fl.t));
-  mat.colorNode = Fn(() => {
-    const d = length(uv().sub(0.5)).mul(2);
-    const soft = pow(clamp(float(1).sub(d), 0, 1), mix(float(1.6), float(2.4), glowP));
-    const centre = float(1).sub(abs(side));
-    const redI = float(0.35).add(uEyeGlow.mul(1.0)).mul(smoothstep(0.0, 0.3, uEyeOpen));
-    const a = soft.mul(mix(float(0.5).add(centre.mul(0.8)), float(0.045), glowP)).mul(redI).mul(smoothstep(0.2, 0.9, fl.t));
-    return vec4(vec3(1.0, 0.03, 0.025).mul(a), a);
-  })();
-  eyeRed = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-  eyeRed.count = EYE_RED_N; eyeRed.frustumCulled = false; eyeRed.renderOrder = 2; eyeRed.name = 'eyeRed'; eyeRed.visible = false;
-  scene.add(eyeRed);
 }
 // 眼球背后一圈极淡的冷色逆光（被黑球的深度挡住中间，只剩边缘），让球的剪影从雾里跳出来
 {
@@ -942,16 +902,15 @@ var redTarget, redFrom, redSeed;
     const d = length(uv().sub(0.5)).mul(2);
     const rq = d.sub(0.66).div(0.09); const ring = exp(rq.mul(rq).negate());
     const fill = pow(clamp(float(1).sub(d), 0, 1), 2.0).mul(0.35);
-    const a = ring.mul(0.6).add(fill).mul(uEyeOpen.mul(uEyeOpen)).mul(0.05).mul(float(0.6).add(uGlow.mul(0.4)));
+    const a = ring.mul(0.6).add(fill).mul(float(0.55).add(uEyeOpen.mul(0.45))).mul(0.05).mul(float(0.6).add(uGlow.mul(0.4)));
     return vec4(vec3(0.55, 0.68, 0.88).mul(a), a);
   })();
   eyeHalo = new THREE.Sprite(mat);
   eyeHalo.position.set(EYE_POS.x, EYE_POS.y, EYE_POS.z - 0.5);
   eyeHalo.scale.setScalar(EYE_R * 3.4);
-  eyeHalo.renderOrder = -6; eyeHalo.name = 'eyeHalo'; eyeHalo.visible = false;
+  eyeHalo.renderOrder = -6; eyeHalo.name = 'eyeHalo';
   scene.add(eyeHalo);
 }
-window.__eyeMesh = { set visible(v) { eyeBlack.visible = eyeRed.visible = eyeHalo.visible = v; }, get visible() { return eyeBlack.visible; } };
 
 // ───────────────────────── 雾团的体积辉光（散开时变淡） ─────────────────────────
 {
@@ -978,14 +937,17 @@ var pts;
   const PA = positions.toAttribute();
   const VA = velocities.toAttribute();
   mat.positionNode = PA.xyz;
-  const s0 = PA.w;
+  const typP = floor(PA.w), s0 = fract(PA.w);
   const seedA = vec3(s0, fract(s0.mul(17.31)), fract(s0.mul(91.7)));
+  const isMistP = float(1).sub(step(0.5, typP)), isRedP = step(1.5, typP), isGlowP = step(2.5, typP);
   const dispA = VA.w;
   // 深度：相对云心的 z，-1 = 远，+1 = 近
   const depthT = clamp(PA.z.sub(uCenter.z).div(CLOUD_RADIUS).mul(0.5).add(0.5), 0, 1);
   const sizeK = mix(float(DEPTH_SIZE[0]), float(DEPTH_SIZE[1]), depthT);
   const brightK = mix(float(DEPTH_BRIGHT[0]), float(DEPTH_BRIGHT[1]), depthT);
-  mat.scaleNode = float(0.04).add(seedA.x.mul(seedA.x).mul(0.08)).mul(sizeK).mul(float(1).add(dispA.mul(0.5)));
+  const mistS = float(0.04).add(seedA.x.mul(seedA.x).mul(0.08)).mul(sizeK).mul(float(1).add(dispA.mul(0.5)));
+  const redS = mix(float(0.03), float(0.13), isGlowP).mul(float(0.8).add(seedA.y.mul(0.4)));
+  mat.scaleNode = mistS.mul(isMistP).add(redS.mul(isRedP));   // 黑眼球粒子在这里不画（由 eyeBlack 画）
   mat.colorNode = Fn(() => {
     const d = length(uv().sub(0.5)).mul(2);
     // 近处更软（轻微虚焦），远处更锐
@@ -1000,7 +962,10 @@ var pts;
     const perp = abs(rel.x.mul(uShaftD.y).sub(rel.y.mul(uShaftD.x)));
     const inShaft = exp(perp.mul(perp).mul(-1.1)).mul(smoothstep(1.5, 5.0, along));
     const a = soft.mul(mix(float(0.15), float(0.095), dispA)).mul(float(0.7).add(seedA.z.mul(0.6))).mul(brightK).mul(float(0.62).add(inShaft.mul(1.5)));
-    return vec4(cold.mul(a), a);
+    // 红竖瞳：平时就亮着暗红，被搅动时瞪亮；红晕粒子大而淡
+    const redSoft = pow(clamp(float(1).sub(d), 0, 1), mix(float(1.6), float(2.4), isGlowP));
+    const redA = redSoft.mul(mix(float(0.9), float(0.05), isGlowP)).mul(float(0.5).add(uEyeGlow.mul(0.9)));
+    return mix(vec4(cold.mul(a), a), vec4(vec3(1.0, 0.03, 0.025).mul(redA), redA), isRedP);
   })();
   pts = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
   pts.count = COUNT;
@@ -1038,7 +1003,7 @@ function reflectOnFloor(P) {
   return { F: vec3(F.x, G, F.z), k, vis, rip };
 }
 const REFL_N = Math.floor(COUNT / 4);
-var reflPts, reflRed;
+var reflPts;
 {
   const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
   mat.fog = false;
@@ -1050,32 +1015,14 @@ var reflPts, reflRed;
   mat.colorNode = Fn(() => {
     const d = length(uv().sub(0.5)).mul(2);
     const soft = pow(clamp(float(1).sub(d), 0, 1), 2.2);
-    const a = soft.mul(0.12).mul(r.vis).mul(smoothstep(0.25, 0.7, r.rip)).mul(float(0.7).add(uGlow.mul(0.2)));
-    return vec4(vec3(0.5, 0.62, 0.8).mul(a), a);
+    const tR = floor(PA.w), isR = step(1.5, tR), isM = float(1).sub(step(0.5, tR));
+    const a = soft.mul(0.12).mul(r.vis).mul(smoothstep(0.25, 0.7, r.rip)).mul(float(0.7).add(uGlow.mul(0.2))).mul(isM.add(isR.mul(1.4)));
+    return vec4(mix(vec3(0.5, 0.62, 0.8), vec3(1.0, 0.03, 0.025), isR).mul(a), a);
   })();
   mat.depthTest = PROC;   // v5：倒影粒子是跨在水面上的竖片，下半截会被背景板的水面深度挡住
   reflPts = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
   reflPts.count = REFL_N; reflPts.frustumCulled = false; reflPts.renderOrder = -10; reflPts.name = 'reflFog';
   scene.add(reflPts);
-}
-{
-  const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
-  mat.fog = false;
-  const r = reflectOnFloor(redFrom);
-  mat.positionNode = r.F;
-  const sz = float(0.05).add(redSeed.w.mul(0.1)).mul(r.k);
-  mat.scaleNode = vec2(sz.mul(1.6), sz.mul(6.0));
-  mat.colorNode = Fn(() => {
-    const d = length(uv().sub(0.5)).mul(2);
-    const soft = pow(clamp(float(1).sub(d), 0, 1), 2.0);
-    const redI = float(0.3).add(uEyeGlow.mul(1.0)).mul(smoothstep(0.2, 0.6, uEyeOpen));
-    const a = soft.mul(0.16).mul(r.vis).mul(smoothstep(0.3, 0.7, r.rip)).mul(redI);
-    return vec4(vec3(1.0, 0.03, 0.025).mul(a), a);
-  })();
-  mat.depthTest = PROC;
-  reflRed = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
-  reflRed.count = EYE_RED_N; reflRed.frustumCulled = false; reflRed.renderOrder = -10; reflRed.name = 'reflRed'; reflRed.visible = false;
-  scene.add(reflRed);
 }
 
 // ───────────────────────── 前景岩石剪影（v4）：贴着画面边缘的一层近景黑石，给前/中/后三层纵深 ─────────────────────────
@@ -1237,7 +1184,7 @@ function applyParams() {
 applyParams();
 
 // ───────────────────────── 散开程度 → 揭示 / 染光 / 相机 ─────────────────────────
-let scatter = 0, heavy = 0, eyeOpen = 0, eyeGlow = 0, city = 0, glow = 0.25;
+let scatter = 0, heavy = 0, eyeOpen = 0, eyeGlow = 0, city = 0.5, glow = 0.25;
 let snakeT = -1, snakeCooldown = 0;
 const pupil = new THREE.Vector2();
 const camOff = new THREE.Vector2();
@@ -1298,8 +1245,9 @@ function tick() {
   const glowT = THREE.MathUtils.clamp(openT * 0.45 + heavy * 0.6, 0, 1);
   eyeGlow += (glowT - eyeGlow) * (1 - Math.exp(-dt * 2.5));
   // 城影：只在散到最开、眼睛几乎全睁时浮现；回聚时它先退（退得比眼睛闭得快）
-  const cityT = THREE.MathUtils.smoothstep(heavy, 0.35, 1.0) * THREE.MathUtils.smoothstep(scatter, 0.4, 0.7) * THREE.MathUtils.smoothstep(eyeOpen, 0.7, 0.95);
-  city += (cityT - city) * (1 - Math.exp(-dt * (cityT > city ? 1.2 : 4.0)));
+  // v6：城影一直淡淡地在，搅得越开越清楚
+  const cityT = 0.5 + 0.5 * Math.max(THREE.MathUtils.smoothstep(scatter, 0.1, 0.6), heavy);
+  city += (cityT - city) * (1 - Math.exp(-dt * (cityT > city ? 1.5 : 1.0)));
   const tx = pointerIn ? THREE.MathUtils.clamp((smoothWorld.x - EYE_POS.x) / (CLOUD_RADIUS * 1.4), -1, 1) : 0;
   const ty = pointerIn ? THREE.MathUtils.clamp((smoothWorld.y - EYE_POS.y) / (CLOUD_RADIUS * 1.2), -1, 1) : 0;
   pupil.x += (tx - pupil.x) * (1 - Math.exp(-dt * 2.4));
@@ -1311,8 +1259,6 @@ function tick() {
 
   if (qs.has('eyek')) { eyeOpen = +qs.get('eyek'); eyeGlow = eyeOpen; }
   if (qs.has('cityk')) city = +qs.get('cityk');
-  window.__eyeMesh.visible = eyeOpen > 0.015 && !(qs.get('hide') || '').includes('eye');
-  reflRed.visible = eyeRed.visible && eyeOpen > 0.2;
   window.__cityMesh.visible = city > 0.004;
   uEyeOpen.value = eyeOpen; uEyeGlow.value = eyeGlow; uPupil.value.copy(pupil); uCity.value = city;
   uBreath.value = Math.sin(t * 0.4);
@@ -1324,7 +1270,7 @@ function tick() {
   const LK = +(qs.get('lk') || 1);
   shaftLight.intensity = (55 + glow * 10) * LK;
   cloudLight.intensity = (1.6 + glow * 0.8) * LK;
-  eyeLight.intensity = eyeGlow * eyeOpen * 1.6 * LK;
+  eyeLight.intensity = (0.25 + eyeGlow) * 1.2 * LK;
   hemi.intensity = 0.18;
   uFogD.value = THREE.MathUtils.lerp(+(qs.get('fog') || 0.062), 0.042, city);
 
@@ -1362,7 +1308,7 @@ function tick() {
   // 自适应降档：开场 2.5 秒后测帧率，太低就少画一半粒子、像素比降到 1（深度分层和地雾保留）
   if (now - bootT > 2500) { perfN++; perfT += rawDt; }
   if (degraded === false && perfT > 3) {
-    if (perfN / perfT < 32) { degraded = true; pts.count = Math.floor(COUNT / 2); reflPts.count = Math.floor(REFL_N / 2); eyeBlack.count = Math.floor(EYE_N / 2); eyeRed.count = reflRed.count = Math.floor(EYE_RED_N / 2) ; uEyeSize.value = Math.SQRT2; frame(); }
+    if (perfN / perfT < 32) { degraded = true; pts.count = Math.floor(COUNT / 2); reflPts.count = Math.floor(REFL_N / 2); eyeBlack.count = Math.floor(COUNT / 2); uEyeSize.value = Math.SQRT2; frame(); }
     perfN = 0; perfT = 0; if (degraded === false && ++perfChecks > 2) degraded = 'ok';
   }
   fpsN++;
