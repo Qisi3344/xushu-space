@@ -91,6 +91,7 @@ const EYE_R = +(new URLSearchParams(location.search).get('eyer') || 1.3);
 // v7：竖瞳是一道黑色梭形裂缝，四周一圈放射状的红光虹膜；外圈改成黑墨漩涡，夹着零星红火星
 const FRAC = [0.18, 0.42, 0.11, 0.02, 0.23, 0.04];
 const FRAC_SPHERE = FRAC[1];
+const MIST_ON = new URLSearchParams(location.search).get('mist') === '1' ? 1 : 0;   // v10.1：她要去掉白色雾粒噪点，?mist=1 才画
 const SLIT_W = 0.085, IRIS_R = 0.6;   // 竖瞳半宽、虹膜半径（× 眼球半径）
 // v8 低机位仰拍（横屏）：相机在眼球右前方贴地，朝左上仰拍；和 Blender 背景板 low 版同一台相机。?cam=front 回到旧的正面构图
 const QS0 = new URLSearchParams(location.search);
@@ -1028,7 +1029,7 @@ var pts;
   const lowP = LOW ? smoothstep(GROUND_Y + 1.9, GROUND_Y + 0.3, HAp.y).mul(isMistP) : float(0);
   const riseP = fract(time.mul(0.045).add(fract(s0.mul(7.31))));
   const riseA = sin(riseP.mul(Math.PI));
-  mat.scaleNode = mistS.mul(isMistP).mul(float(1).add(lowP.mul(1.8))).add(redS.mul(isRedP));   // 黑眼球粒子在这里不画（由 eyeBlack 画）
+  mat.scaleNode = mistS.mul(isMistP).mul(MIST_ON).mul(float(1).add(lowP.mul(1.8))).add(redS.mul(isRedP));   // 黑眼球粒子在这里不画（由 eyeBlack 画）
   mat.colorNode = Fn(() => {
     const d = length(uv().sub(0.5)).mul(2);
     // 近处更软（轻微虚焦），远处更锐
@@ -1099,7 +1100,7 @@ var reflPts;
     const d = length(uv().sub(0.5)).mul(2);
     const soft = pow(clamp(float(1).sub(d), 0, 1), 2.2);
     const tR = floor(PA.w), isR = step(1.5, tR).mul(float(1).sub(step(3.5, tR))), isM = float(1).sub(step(0.5, tR));
-    const a = soft.mul(0.12).mul(r.vis).mul(smoothstep(0.25, 0.7, r.rip)).mul(float(0.7).add(uGlow.mul(0.2))).mul(isM.add(isR.mul(1.4)));
+    const a = soft.mul(0.12).mul(r.vis).mul(smoothstep(0.25, 0.7, r.rip)).mul(float(0.7).add(uGlow.mul(0.2))).mul(isM.mul(MIST_ON).add(isR.mul(1.4)));
     return vec4(mix(vec3(0.5, 0.62, 0.8), vec3(1.0, 0.03, 0.025), isR).mul(a), a);
   })();
   mat.depthTest = PROC;   // v5：倒影粒子是跨在水面上的竖片，下半截会被背景板的水面深度挡住
