@@ -426,6 +426,7 @@ def build():
             (0.38, -1.02, 2.8, 0.42, 0.35, 0.16), (-0.55, -1.05, 4.2, 0.30, 0.30, 0.12),
         ],
     }
+    if 'fg_low' in CFG: FG['low'] = CFG['fg_low']
     FG_BM = {'land': bmesh.new(), 'port': bmesh.new(), 'low': bmesh.new()}
     for vname in ('land', 'port', 'low'):
         bm = FG_BM[vname]
@@ -437,6 +438,9 @@ def build():
             ymax = CAMS['land']['pos'].y - 0.35 if vname == 'port' else None
             blob(bm, c, rad, subdiv=6, amp=0.26, freq=0.55, rotz=rr(-0.3, 0.3), seed=k * 3.7 + (11 if vname == 'port' else 0),
                  zmin=G - 1.0, ymax=ymax, chips=9)
+    for k, (x3, y3, z3, rx, ry, rz) in enumerate(CFG.get('walls_low', [])):   # v10 世界坐标侧壁块（three 坐标 + blender 半径）
+        blob(FG_BM['low'], B(x3, y3, z3), (rx, ry, rz), subdiv=4, amp=0.5, freq=0.7, rotz=0.0, seed=90 + k * 5.3,
+             zmin=G - 1.0, chips=9)
     bm = FG_BM['land']
     for k in range(30):                                     # 顶岩檐下挂的小钟乳石
         sx = rr(-1.1, 1.1); c, hh = place('land', sx, 1.0, rr(5.5, 7.5))
