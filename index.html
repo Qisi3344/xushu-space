@@ -794,16 +794,18 @@ async function buildPlate(v) {
     const cC = pow(texture(cityTex, vec2(st.x, st.y.mul(0.5).add(0.5))).rgb, vec3(2.2));
     const cA = texture(cityTex, vec2(st.x, st.y.mul(0.5))).r;
     const k = uCity;
-    const col = cave.mul(float(1).sub(cA.mul(k))).add(cC.mul(k)).toVar();
+    // v6.1：整体压暗，顶部（钟乳石 + 洞顶）再压一档，往下渐回
+    const topDark = mix(float(1), float(0.3), smoothstep(0.55, 0.97, st.y)).mul(0.72);
+    const col = cave.mul(float(1).sub(cA.mul(k))).add(cC.mul(k)).mul(topDark).toVar();
     // v6：城影所在那一条横带后面的雾提亮一点（冷色），城的剪影才读得出来；城本身不提亮
     const band = smoothstep(0.5, 0.64, st.y).mul(smoothstep(0.99, 0.86, st.y));
-    col.addAssign(cave.mul(1.3).add(vec3(0.0016, 0.0024, 0.0042)).mul(band.mul(k).mul(float(1).sub(cA))));
+    col.addAssign(cave.mul(0.5).add(vec3(0.0011, 0.0017, 0.003)).mul(band.mul(k).mul(float(1).sub(cA))));
     // 断层处的膜：视差（像素）≈ 相机离出图位置的平移 × 逆深度落差 ÷ 每像素角度；拉开越多越暗，读成岩石边的阴影
     const gapPx = attribute('gap', 'float').mul(length(cameraPosition.sub(uPlateO))).div(uPlateNom);
     col.mulAssign(mix(float(1), float(0.15), smoothstep(16.0, 40.0, gapPx)));
     // 拨雾时云团把近处的岩石和水面照亮一点（世界距离衰减），合拢时退去
     const dc = length(positionWorld.sub(uCenter));
-    const lit = exp(dc.mul(dc).mul(-0.03)).mul(max(uGlow.sub(0.25), 0)).mul(0.8);
+    const lit = exp(dc.mul(dc).mul(-0.03)).mul(max(uGlow.sub(0.25), 0)).mul(0.4).mul(topDark);
     col.addAssign(cave.mul(lit).add(vec3(0.0025, 0.0035, 0.0055).mul(lit)));
     // 妖瞳睁开时极弱的暗红只渗到眼睛后下方的水面
     const de = length(positionWorld.sub(vec3(EYE_POS.x, GROUND_Y, EYE_POS.z)));
