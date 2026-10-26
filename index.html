@@ -95,7 +95,7 @@ const SLIT_W = 0.085, IRIS_R = 0.6;   // 竖瞳半宽、虹膜半径（× 眼球
 // v8 低机位仰拍（横屏）：相机在眼球右前方贴地，朝左上仰拍；和 Blender 背景板 low 版同一台相机。?cam=front 回到旧的正面构图
 const QS0 = new URLSearchParams(location.search);
 const LOW = QS0.get('cam') !== 'front' && innerWidth / innerHeight >= 1.0;
-const LOW_CAM = { pos: new THREE.Vector3(3.2, -2.2, 5.54), target: new THREE.Vector3(0.328, -0.296, -3.848), vfov: 44 };
+const LOW_CAM = { pos: new THREE.Vector3(4.75, -2.4, 8.23), target: new THREE.Vector3(0, -1.4, 0), vfov: 44 };
 // 眼球自己的坐标系：EF 朝相机（瞳孔正盯着你），EU 世界上方正交化，ER 右
 const EF = LOW ? LOW_CAM.pos.clone().sub(EYE_POS).normalize() : new THREE.Vector3(0, 0, 1);
 const ER = new THREE.Vector3(0, 1, 0).cross(EF).normalize();
