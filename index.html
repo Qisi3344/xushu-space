@@ -30,12 +30,12 @@
   #reset:hover { color: rgba(220,228,238,.75); }
   #err { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 24px; color: rgba(190,200,212,.6); font-size: 13px; line-height: 1.8; }
   /* v9 鬼洞纹装饰图标（无功能）+ 拨雾范围调节（细长十字 = 放大，双横线 = 缩小） */
-  .glyphs { position: fixed; display: flex; flex-direction: column; gap: 22px; z-index: 2; color: rgba(186,196,210,.26); pointer-events: none; user-select: none; }
+  .glyphs { position: fixed; display: flex; flex-direction: column; gap: 22px; z-index: 2; color: rgba(186,196,210,.4); pointer-events: none; user-select: none; }
   .glyphs svg { width: 30px; height: 30px; display: block; }
   #glyphTL { left: calc(28px + env(safe-area-inset-left)); top: calc(26px + env(safe-area-inset-top)); }
   #glyphBR { right: calc(26px + env(safe-area-inset-right)); bottom: calc(34px + env(safe-area-inset-bottom)); }
   #brush { position: fixed; left: calc(28px + env(safe-area-inset-left)); top: 50%; transform: translateY(-50%); z-index: 3; display: flex; flex-direction: column; align-items: center; gap: 18px; }
-  #brush button { all: unset; cursor: pointer; display: block; width: 30px; color: rgba(186,196,210,.3); transition: color .3s; -webkit-tap-highlight-color: transparent; }
+  #brush button { all: unset; cursor: pointer; display: block; width: 30px; color: rgba(186,196,210,.45); transition: color .3s; -webkit-tap-highlight-color: transparent; }
   #brush button:hover, #brush button:focus-visible { color: rgba(222,230,240,.7); }
   #brush svg { display: block; width: 30px; overflow: visible; }
   #brushRing { position: fixed; left: 0; top: 0; border: 1px solid rgba(200,210,224,.35); border-radius: 50%; pointer-events: none; opacity: 0; transform: translate(-50%, -50%); transition: opacity .9s; z-index: 2; }
