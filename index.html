@@ -71,8 +71,11 @@ const GROUND_Y = -CLOUD_RADIUS * 1.18;                  // 地面高度
 const MOUTH = new THREE.Vector2(0, 0.85);               // 洞口在云团后上方
 const EYE_POS = new THREE.Vector3(0, 0, 0);             // v6：眼球就是粒子团本身，球心 = 云心
 const EYE_R = +(new URLSearchParams(location.search).get('eyer') || 1.3);
-// v6 粒子分工（每颗粒子的 home.w = 类型 + 随机种子）：0 = 外圈薄雾，1 = 黑眼球表面，2 = 红竖瞳，3 = 竖瞳红晕
-const FRAC_SPHERE = 0.5, FRAC_RED = 0.075;
+// 粒子分工（每颗粒子的 home.w = 类型 + 随机种子）：0 = 银灰薄雾，1 = 黑眼球表面，2 = 红虹膜，3 = 虹膜红晕，4 = 黑墨漩涡，5 = 墨里的火星
+// v7：竖瞳是一道黑色梭形裂缝，四周一圈放射状的红光虹膜；外圈改成黑墨漩涡，夹着零星红火星
+const FRAC = [0.18, 0.42, 0.11, 0.02, 0.23, 0.04];
+const FRAC_SPHERE = FRAC[1];
+const SLIT_W = 0.085, IRIS_R = 0.6;   // 竖瞳半宽、虹膜半径（× 眼球半径）
 
 // 深度分层的量化比例（近 / 远）：大小约 2.5 倍、亮度约 3.3 倍
 const DEPTH_SIZE = [0.5, 1.25];
@@ -172,7 +175,7 @@ const posArr  = new Float32Array(COUNT * 4);
 {
   // 类型随机打散在下标里：降档只画前一半时，眼球 / 竖瞳 / 薄雾的比例不变
   const types = new Uint8Array(COUNT);
-  for (let i = 0; i < COUNT; i++) { const u = Math.random(); types[i] = u < FRAC_SPHERE ? 1 : u < FRAC_SPHERE + FRAC_RED ? (Math.random() < 0.12 ? 3 : 2) : 0; }
+  for (let i = 0; i < COUNT; i++) { let u = Math.random(), t = 0; while (t < 5 && u >= FRAC[t]) { u -= FRAC[t]; t++; } types[i] = t; }
   const sphIdx = []; for (let i = 0; i < COUNT; i++) if (types[i] === 1) sphIdx.push(i);
   // 黑眼球：斐波那契球面，朝相机的那面铺到后方 ~105°，薄薄一层壳
   const NS = sphIdx.length, zMin = -0.28, ga = Math.PI * (3 - Math.sqrt(5));
@@ -185,23 +188,40 @@ const posArr  = new Float32Array(COUNT * 4);
   for (let i = 0; i < COUNT; i++) {
     const t = types[i];
     if (t === 1) continue;
-    if (t >= 2) {
-      // 竖瞳：贴在球面正前方的一道细长裂缝，中间宽、两头尖，中心更密
-      const u = Math.random() * 2 - 1, yU = Math.sign(u) * Math.pow(Math.abs(u), 0.85);
-      const side = (Math.random() + Math.random() + Math.random()) / 1.5 - 1;
-      const halfW = (t === 3 ? 0.11 : 0.07) * EYE_R * Math.pow(Math.max(0, 1 - yU * yU), 1.3);
-      const lx = side * halfW, ly = yU * EYE_R * 0.86;
-      const lz = Math.sqrt(Math.max(EYE_R * EYE_R - lx * lx - ly * ly, 0)) + EYE_R * 0.03;
+    if (t === 2 || t === 3) {
+      // 虹膜：竖瞳外面的一圈椭圆区域，贴近裂缝最密，带放射状的条纹；裂缝本身空着，露出后面的黑球 = 黑色梭形瞳孔
+      let lx, ly, ok = false;
+      for (let tries = 0; tries < 60 && !ok; tries++) {
+        const th = Math.random() * Math.PI * 2;
+        const rr = Math.pow(Math.random(), t === 3 ? 0.8 : 1.6);         // 偏向内圈
+        lx = Math.cos(th) * rr * IRIS_R * EYE_R * 0.92; ly = Math.sin(th) * rr * IRIS_R * EYE_R;
+        const yN = ly / (EYE_R * 0.86), hw = SLIT_W * EYE_R * Math.pow(Math.max(0, 1 - yN * yN), 1.2);
+        if (Math.abs(lx) < hw) continue;                                   // 瞳孔里不放
+        const ray = 0.35 + 0.65 * Math.pow(Math.abs(Math.cos(th * 11 + Math.sin(th * 3) * 0.6)), 6);
+        ok = Math.random() < ray;
+      }
+      const lz = Math.sqrt(Math.max(EYE_R * EYE_R - lx * lx - ly * ly, 0)) + EYE_R * 0.025;
       set(i, lx, ly, lz, t);
       continue;
     }
-    // 外圈薄雾：从球面外一点到原来的云团边缘，越往外越稀，少量游丝飘得更远
+    if (t === 4 || t === 5) {
+      // 黑墨漩涡：三条对数螺旋臂绕着眼球转，压扁在眼球周围的一个斜盘上，越外越散
+      const arm = Math.floor(Math.random() * 3), u = Math.pow(Math.random(), 0.8);
+      const r = EYE_R * (1.02 + u * 1.15);
+      const th = arm * 2.094 + Math.log(r / EYE_R) * 2.6 + (Math.random() - 0.5) * (0.5 + u * 1.1);
+      const sp = 0.06 + u * 0.32;
+      const x = Math.cos(th) * r * 1.12 + (Math.random() - 0.5) * sp, y = Math.sin(th) * r * 0.82 + (Math.random() - 0.5) * sp;
+      const z = (Math.random() - 0.5) * (0.35 + u * 0.8) - 0.15;
+      set(i, x, y, z, t);
+      continue;
+    }
+    // 银灰薄雾：淡淡一层衬在墨漩涡后面，让黑墨读得出来
     let x, y, z, l;
     do { x = Math.random() * 2 - 1; y = Math.random() * 2 - 1; z = Math.random() * 2 - 1; l = x * x + y * y + z * z; } while (l > 1 || l < 1e-4);
     const n = Math.sqrt(l);
-    let r = EYE_R * 1.06 + Math.pow(Math.random(), 1.7) * (CLOUD_RADIUS * 1.02 - EYE_R * 1.06);
+    let r = EYE_R * 1.06 + Math.pow(Math.random(), 1.4) * (CLOUD_RADIUS * 1.05 - EYE_R * 1.06);
     if (Math.random() < 0.08) r = CLOUD_RADIUS * (1.0 + Math.random() * 0.25);
-    set(i, x / n * r * 1.03, y / n * r * 0.95, z / n * r, 0);
+    set(i, x / n * r * 1.03, y / n * r * 0.95, z / n * r - 0.3, 0);
   }
 }
 const homes      = instancedArray(homeArr, 'vec4');
@@ -218,7 +238,8 @@ const computeUpdate = Fn(() => {
   const hw = homes.element(i).w;
   const typ = floor(hw);
   const seed = vec4(fract(hw), hash(i), hash(i.add(11371)), hash(i.add(29501)));
-  const isMist = float(1).sub(step(0.5, typ)), isRed = step(1.5, typ);
+  const isEye = float(1).sub(step(0.5, abs(typ.sub(1)))).add(float(1).sub(step(0.5, abs(typ.sub(2))))).add(float(1).sub(step(0.5, abs(typ.sub(3)))));
+  const isMist = float(1).sub(isEye), isRed = step(1.5, typ).mul(float(1).sub(step(3.5, typ)));
   const dt = uDt;
 
   // 呼吸：回家位置随时间极缓地起伏、微转
@@ -871,7 +892,7 @@ var eyeBlack, eyeHalo;
   const VA = velocities.toAttribute();
   const HA = homes.toAttribute();
   const typ = floor(PA.w), sd = fract(PA.w);
-  const isSph = float(1).sub(step(0.5, abs(typ.sub(1))));
+  const isSph = float(1).sub(step(0.5, abs(typ.sub(1)))), isInk = float(1).sub(step(0.5, abs(typ.sub(4))));
   const dir = normalize(HA.xyz.sub(vec3(EYE_POS.x, EYE_POS.y, EYE_POS.z)));
   const disp = VA.w;
   const NS = Math.max(1, Math.round(COUNT * FRAC_SPHERE));
@@ -879,7 +900,8 @@ var eyeBlack, eyeHalo;
   const mat = new THREE.SpriteNodeMaterial({ transparent: false, depthWrite: true, alphaTest: 0.5 });
   mat.fog = false;
   mat.positionNode = PA.xyz;
-  mat.scaleNode = float(baseS).mul(uEyeSize).mul(float(0.85).add(sd.mul(0.3))).mul(float(1).sub(clamp(disp.mul(1.2), 0, 0.6))).mul(isSph);
+  const inkS = float(0.022).add(sd.mul(sd).mul(0.05)).mul(uEyeSize);
+  mat.scaleNode = float(baseS).mul(uEyeSize).mul(float(0.85).add(sd.mul(0.3))).mul(float(1).sub(clamp(disp.mul(1.2), 0, 0.6))).mul(isSph).add(inkS.mul(isInk));
   mat.colorNode = Fn(() => {
     const d = length(uv().sub(0.5)).mul(2);
     const toCam = normalize(cameraPosition.sub(HA.xyz));
@@ -890,7 +912,12 @@ var eyeBlack, eyeHalo;
     const col = vec3(0.0025, 0.003, 0.0045)
       .add(vec3(0.42, 0.55, 0.75).mul(rim.mul(float(0.12).add(lit.mul(0.3))).mul(float(0.55).add(uGlow.mul(0.4)))).mul(home))
       .add(vec3(0.016, 0.018, 0.026).mul(float(1).sub(home)));   // 甩出去的墨粒带一点灰，在黑处也看得见轨迹
-    return vec4(col, smoothstep(1.0, 0.7, d));
+    // 左上方一道弧形高光：黑曜石一样的湿亮，不是一个白点
+    const gl = dot(dir, normalize(vec3(-0.45, 0.6, 0.66)));
+    const ul = clamp(dot(dir, normalize(vec3(-0.6, 0.8, 0.0))), 0, 1);
+    const arc = smoothstep(0.3, 0.55, float(1).sub(facing)).mul(smoothstep(0.92, 0.65, float(1).sub(facing))).mul(pow(ul, 3.0)).mul(0.08).add(gl.mul(0)).mul(float(0.6).add(uGlow.mul(0.3))).mul(home);
+    const ink = vec3(0.0035, 0.0032, 0.0036).add(vec3(0.006, 0.001, 0.001).mul(smoothstep(0.85, 1.0, sd)));   // 墨粒：近黑，少数带一丝暗红
+    return vec4(mix(col.add(vec3(0.55, 0.62, 0.75).mul(arc)), ink, isInk), smoothstep(1.0, 0.7, d));
   })();
   eyeBlack = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
   eyeBlack.count = COUNT; eyeBlack.frustumCulled = false; eyeBlack.renderOrder = -1; eyeBlack.name = 'eye';
@@ -941,14 +968,21 @@ var pts;
   mat.positionNode = PA.xyz;
   const typP = floor(PA.w), s0 = fract(PA.w);
   const seedA = vec3(s0, fract(s0.mul(17.31)), fract(s0.mul(91.7)));
-  const isMistP = float(1).sub(step(0.5, typP)), isRedP = step(1.5, typP), isGlowP = step(2.5, typP);
+  const isMistP = float(1).sub(step(0.5, typP)), isEmbP = step(4.5, typP);
+  const isGlowP = float(1).sub(step(0.5, abs(typP.sub(3))));
+  const isRedP = step(1.5, typP).mul(float(1).sub(step(3.5, typP))).add(isEmbP);
+  const HAp = homes.toAttribute();
+  // 虹膜亮度：贴着裂缝最亮，往外衰减
+  const irisX = abs(HAp.x.sub(EYE_POS.x)), irisY = HAp.y.sub(EYE_POS.y).div(EYE_R * 0.86);
+  const slitHW = pow(clamp(float(1).sub(irisY.mul(irisY)), 0, 1), 1.2).mul(SLIT_W * EYE_R);
+  const irisL = exp(max(irisX.sub(slitHW), float(0)).div(EYE_R * 0.16).negate()).mul(0.8).add(0.2);
   const dispA = VA.w;
   // 深度：相对云心的 z，-1 = 远，+1 = 近
   const depthT = clamp(PA.z.sub(uCenter.z).div(CLOUD_RADIUS).mul(0.5).add(0.5), 0, 1);
   const sizeK = mix(float(DEPTH_SIZE[0]), float(DEPTH_SIZE[1]), depthT);
   const brightK = mix(float(DEPTH_BRIGHT[0]), float(DEPTH_BRIGHT[1]), depthT);
   const mistS = float(0.04).add(seedA.x.mul(seedA.x).mul(0.08)).mul(sizeK).mul(float(1).add(dispA.mul(0.5)));
-  const redS = mix(float(0.03), float(0.13), isGlowP).mul(float(0.8).add(seedA.y.mul(0.4)));
+  const redS = mix(mix(float(0.036), float(0.2), isGlowP), float(0.02).add(seedA.y.mul(0.03)), isEmbP).mul(float(0.8).add(seedA.y.mul(0.4)));
   mat.scaleNode = mistS.mul(isMistP).add(redS.mul(isRedP));   // 黑眼球粒子在这里不画（由 eyeBlack 画）
   mat.colorNode = Fn(() => {
     const d = length(uv().sub(0.5)).mul(2);
@@ -966,8 +1000,9 @@ var pts;
     const a = soft.mul(mix(float(0.15), float(0.095), dispA)).mul(float(0.7).add(seedA.z.mul(0.6))).mul(brightK).mul(float(0.62).add(inShaft.mul(1.5)));
     // 红竖瞳：平时就亮着暗红，被搅动时瞪亮；红晕粒子大而淡
     const redSoft = pow(clamp(float(1).sub(d), 0, 1), mix(float(1.6), float(2.4), isGlowP));
-    const redA = redSoft.mul(mix(float(0.9), float(0.05), isGlowP)).mul(float(0.5).add(uEyeGlow.mul(0.9)));
-    return mix(vec4(cold.mul(a), a), vec4(vec3(1.0, 0.03, 0.025).mul(redA), redA), isRedP);
+    const redA = redSoft.mul(mix(mix(float(1.6).mul(irisL), float(0.09), isGlowP), float(0.5).mul(seedA.z), isEmbP)).mul(float(0.5).add(uEyeGlow.mul(0.9)));
+    const redC = mix(vec3(1.0, 0.03, 0.025), vec3(1.0, 0.16, 0.06), irisL.mul(0.5).mul(float(1).sub(isEmbP)));   // 贴缝处偏橙一点，像烧红的边
+    return mix(vec4(cold.mul(a), a), vec4(redC.mul(redA), redA), isRedP);
   })();
   pts = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
   pts.count = COUNT;
@@ -1017,7 +1052,7 @@ var reflPts;
   mat.colorNode = Fn(() => {
     const d = length(uv().sub(0.5)).mul(2);
     const soft = pow(clamp(float(1).sub(d), 0, 1), 2.2);
-    const tR = floor(PA.w), isR = step(1.5, tR), isM = float(1).sub(step(0.5, tR));
+    const tR = floor(PA.w), isR = step(1.5, tR).mul(float(1).sub(step(3.5, tR))), isM = float(1).sub(step(0.5, tR));
     const a = soft.mul(0.12).mul(r.vis).mul(smoothstep(0.25, 0.7, r.rip)).mul(float(0.7).add(uGlow.mul(0.2))).mul(isM.add(isR.mul(1.4)));
     return vec4(mix(vec3(0.5, 0.62, 0.8), vec3(1.0, 0.03, 0.025), isR).mul(a), a);
   })();
