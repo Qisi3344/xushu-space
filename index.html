@@ -793,12 +793,12 @@ function updatePlateNom() {
 if (!PROC) window.__cityMesh = { visible: false };
 const plateVariantFor = () => (LOW ? 'low' : camBase.z > 14.2 ? 'port' : 'land');
 async function buildPlate(v) {
-  const A = 'assets/';
+  const A = 'assets/', AV = 'v=11';   // 版本号：防止浏览器拿旧缓存的底图配新机位（会缩成中间一块矩形）
   const loadImg = src => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
   const tl = new THREE.TextureLoader();
   const [meta, depthImg, caveTex, cityTex] = await Promise.all([
-    fetch(A + v + '.json').then(r => r.json()), loadImg(A + v + '_depth.png'),
-    tl.loadAsync(A + v + '_cave.webp'), tl.loadAsync(A + v + '_city.webp')
+    fetch(A + v + '.json?' + AV, { cache: 'no-cache' }).then(r => r.json()), loadImg(A + v + '_depth.png?' + AV),
+    tl.loadAsync(A + v + '_cave.webp?' + AV), tl.loadAsync(A + v + '_city.webp?' + AV)
   ]);
   caveTex.colorSpace = THREE.SRGBColorSpace; cityTex.colorSpace = THREE.NoColorSpace;
   for (const t of [caveTex, cityTex]) { t.generateMipmaps = false; t.minFilter = t.magFilter = THREE.LinearFilter; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.needsUpdate = true; }
@@ -871,8 +871,18 @@ async function buildPlate(v) {
     const lit = exp(dc.mul(dc).mul(-0.03)).mul(max(uGlow.sub(0.25), 0)).mul(0.4).mul(topDark);
     col.addAssign(cave.mul(lit).add(vec3(0.0025, 0.0035, 0.0055).mul(lit)));
     // 妖瞳睁开时极弱的暗红只渗到眼睛后下方的水面
+    // v11：不加任何光源，只是湿石和水面"映"出眼睛的暗红——
+    // 石壁：原本就有的湿润高光按离眼距离染一点暗红（亮处染得多，暗处几乎不变，读成水膜漫反射）
+    const eg = float(0.35).add(uEyeGlow.mul(0.65));
+    const dE = length(positionWorld.sub(vec3(EYE_POS.x, EYE_POS.y, EYE_POS.z)));
+    const nearE = exp(dE.mul(dE).mul(-0.016));
+    const lum = dot(cave, vec3(0.3, 0.6, 0.1));
+    const sheen = smoothstep(0.004, 0.05, lum);
+    col.addAssign(cave.mul(vec3(1.5, 0.09, 0.06)).mul(sheen).mul(nearE).mul(eg).mul(topDark));
+    // 水面：眼下方贴地一片极淡的暗红倒影，越靠近眼睛正下方越明显
     const de = length(positionWorld.sub(vec3(EYE_POS.x, GROUND_Y, EYE_POS.z)));
-    col.addAssign(vec3(0.02, 0.0006, 0.0005).mul(exp(de.mul(de).mul(-0.12))).mul(float(0.25).add(uEyeGlow)));
+    const onWater = smoothstep(GROUND_Y + 0.35, GROUND_Y + 0.02, positionWorld.y);
+    col.addAssign(vec3(0.05, 0.002, 0.0015).mul(exp(de.mul(de).mul(-0.045))).mul(onWater.mul(0.8).add(0.2)).mul(eg));
     return col.mul(uPlateGain);
   })();
   const m = new THREE.Mesh(geo, mat);
