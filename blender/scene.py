@@ -44,9 +44,14 @@ def toThree(v): return [v.x, v.z, -v.y]
 CAMS = {
     'land': {'pos': B(0, 0.3, 12.391), 'res': (2560, 1280), 'vfov': 48.0},
     'port': {'pos': B(0, 0.3, 16.68), 'res': (1080, 1920), 'vfov': 46.0},
+    # v8 低机位仰拍：眼球右前方、贴着前景石头，水平偏右 30°，仰角 19°，22mm（2:1 画幅竖直 FOV 44°）
+    'low':  {'pos': B(3.2, -2.2, 5.54), 'target': B(0.328, -0.296, -3.848), 'res': (2560, 1280), 'vfov': 44.0},
 }
+if CFG.get('cam_pos'): CAMS['low']['pos'] = B(*CFG['cam_pos'])
+if CFG.get('cam_target'): CAMS['low']['target'] = B(*CFG['cam_target'])
+if CFG.get('cam_vfov'): CAMS['low']['vfov'] = CFG['cam_vfov']
 TARGET = B(0, -1.25, 0)
-SCREEN = {'land': (1.6, 40.0), 'port': (0.462, 40.0)}
+SCREEN = {'land': (1.6, 40.0), 'port': (0.462, 40.0), 'low': (2.0, 44.0)}
 SH_TOP = B(-3.4, 7.2, -1.2); SH_BOT = B(0.9, G, 0.9); SH_DIR = (SH_BOT - SH_TOP).normalized()
 SH2_BOT = B(1.9, G, -5.0)
 
@@ -61,8 +66,12 @@ def _rng_random():
     return ((t ^ (t >> 14)) & 0xFFFFFFFF) / 4294967296.0
 def rr(a, b): return a + (b - a) * _rng_random()
 
-def cam_basis(pos):
-    f = (TARGET - pos).normalized(); r = f.cross(Vector((0, 0, 1))).normalized(); u = r.cross(f)
+def cam_basis(pos, tgt=None):
+    if tgt is None:
+        tgt = TARGET
+        for c_ in CAMS.values():
+            if (c_['pos'] - pos).length < 1e-6 and 'target' in c_: tgt = c_['target']
+    f = (tgt - pos).normalized(); r = f.cross(Vector((0, 0, 1))).normalized(); u = r.cross(f)
     return f, r, u
 def aim(ob, target):
     ob.rotation_euler = (target - ob.location).to_track_quat('-Z', 'Y').to_euler()
@@ -411,9 +420,14 @@ def build():
             (1.36, -0.25, 3.0, 0.19, 0.22, 0.90), (-0.35, -1.12, 3.1, 0.55, 0.22, 0.20),
             (0.75, -1.15, 3.4, 0.40, 0.22, 0.16),
         ],
+        # v8 低机位：右侧石壁贴着镜头压住画面右缘，右下一块近石，左下一点碎石
+        'low': [
+            (1.12, 0.15, 3.0, 0.95, 0.75, 2.6), (0.92, -0.85, 2.4, 0.55, 0.45, 0.45),
+            (0.38, -1.02, 2.8, 0.42, 0.35, 0.16), (-0.55, -1.05, 4.2, 0.30, 0.30, 0.12),
+        ],
     }
-    FG_BM = {'land': bmesh.new(), 'port': bmesh.new()}
-    for vname in ('land', 'port'):
+    FG_BM = {'land': bmesh.new(), 'port': bmesh.new(), 'low': bmesh.new()}
+    for vname in ('land', 'port', 'low'):
         bm = FG_BM[vname]
         for k, spec in enumerate(FG[vname]):
             sx, sy, dist, rx, ry, rz = spec
@@ -429,7 +443,7 @@ def build():
         top = c.z + 0.6; h = rr(0.25, 0.9)
         tube(bm, c.x, c.y, top, top - h - 0.6, ('drip', rr(0.05, 0.14), 1.4, 0.004, rr(0, 6.28)), segs=10, rings=16, namp=0.3, seed=k)
     fg_objs = {}
-    for v_ in ('land', 'port'):
+    for v_ in ('land', 'port', 'low'):
         fg_objs[v_] = obj_from_bm(FG_BM[v_], 'foreground_' + v_, M_NEAR, 'cave', subsurf=1)
 
     # ── 中景 / 远景：石柱、石笋、垂幕钟乳 ──
@@ -443,6 +457,7 @@ def build():
     _rng_seed(29)
     COLS = [(-8.5, 14, 1.8), (9.5, 19, 2.0), (-11.5, 29, 1.6), (13.5, 37, 1.9), (-17, 46, 2.6), (19, 52, 2.8), (-21, 64, 2.2), (23, 70, 2.0)]
     for k, (x, y, r) in enumerate(COLS):
+        if k in CFG.get('skip_cols', []): continue
         top = ceiling_at(x, y) or 25
         ph = rr(0, 6.28)
         tube(bm, x, y, G - 1.0, top + 1.0, ('column', r, ph), segs=28, rings=72, namp=0.42, freq=0.45, seed=k + 20,
@@ -585,8 +600,8 @@ def configure(scene):
     C = CAMS[VARIANT]
     cam = bpy.data.objects[PFX + 'Cam']
     cam.data.lens = 12.0 / math.tan(math.radians(C['vfov'] / 2))
-    cam.location = C['pos']; aim(cam, TARGET); scene.camera = cam
-    for v_ in ('land', 'port'):
+    cam.location = C['pos']; aim(cam, C.get('target', TARGET)); scene.camera = cam
+    for v_ in ('land', 'port', 'low'):
         ob = bpy.data.objects.get(PFX + 'foreground_' + v_)
         if ob is not None: ob.hide_render = (v_ != VARIANT)    # 每个版本只出自己的岩框
     # 层切换用物体级开关（同一次执行里新建的场景 layer_collection 可能还没同步）
@@ -595,6 +610,10 @@ def configure(scene):
         c = bpy.data.collections.get(PFX + cname)
         return list(c.objects) if c is not None else []
     for ob in objs('city') + objs('citylights'): ob.hide_render = is_cave
+    co = CFG.get('city_off', [0, 0, 0]) if VARIANT == 'low' else [0, 0, 0]   # three 坐标的平移（x, y, z）
+    for ob in objs('city') + objs('citylights'):
+        if 'lan_base' not in ob: ob['lan_base'] = list(ob.location)
+        b_ = ob['lan_base']; ob.location = (b_[0] + co[0], b_[1] - co[2], b_[2] + co[1])
     for ob in objs('lights'): ob.hide_render = not is_cave
     for ob in objs('cave') + objs('water'):
         ob.is_holdout = not is_cave
