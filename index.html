@@ -96,7 +96,7 @@ const SLIT_W = 0.085, IRIS_R = 0.6;   // 竖瞳半宽、虹膜半径（× 眼球
 // v8 低机位仰拍（横屏）：相机在眼球右前方贴地，朝左上仰拍；和 Blender 背景板 low 版同一台相机。?cam=front 回到旧的正面构图
 const QS0 = new URLSearchParams(location.search);
 const LOW = QS0.get('cam') !== 'front' && innerWidth / innerHeight >= 1.0;
-const LOW_CAM = { pos: new THREE.Vector3(4.75, -2.4, 8.23), target: new THREE.Vector3(0, -1.4, 0), vfov: 44 };
+const LOW_CAM = { pos: new THREE.Vector3(3.2, -2.2, 5.54), target: new THREE.Vector3(0.328, -0.296, -3.848), vfov: 44 };   // v12：回到 v8 机位（她觉得这版构图最好）
 // 眼球自己的坐标系：EF 朝相机（瞳孔正盯着你），EU 世界上方正交化，ER 右
 const EF = LOW ? LOW_CAM.pos.clone().sub(EYE_POS).normalize() : new THREE.Vector3(0, 0, 1);
 const ER = new THREE.Vector3(0, 1, 0).cross(EF).normalize();
@@ -793,7 +793,7 @@ function updatePlateNom() {
 if (!PROC) window.__cityMesh = { visible: false };
 const plateVariantFor = () => (LOW ? 'low' : camBase.z > 14.2 ? 'port' : 'land');
 async function buildPlate(v) {
-  const A = 'assets/', AV = 'v=11';   // 版本号：防止浏览器拿旧缓存的底图配新机位（会缩成中间一块矩形）
+  const A = 'assets/', AV = 'v=12';   // 版本号：防止浏览器拿旧缓存的底图配新机位（会缩成中间一块矩形）
   const loadImg = src => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = src; });
   const tl = new THREE.TextureLoader();
   const [meta, depthImg, caveTex, cityTex] = await Promise.all([
@@ -855,7 +855,7 @@ async function buildPlate(v) {
     const st = uv();
     const cave0 = texture(caveTex, st).rgb;
     // v11.1：左侧石壁退到背景——高频龟裂纹先糊一半（5 点小模糊），再整体压到约 45%，叠一点偏冷的暗色（不用纯黑，免得脏）
-    const leftM = (LOW ? smoothstep(0.47, 0.33, st.x).mul(smoothstep(0.30, 0.42, st.y)) : float(0)).toVar();
+    const leftM = (LOW && new URLSearchParams(location.search).has('lw') ? smoothstep(0.47, 0.33, st.x).mul(smoothstep(0.30, 0.42, st.y)) : float(0)).toVar();
     const bo = float(0.0022);
     const blur = cave0.add(texture(caveTex, st.add(vec2(bo, 0))).rgb).add(texture(caveTex, st.sub(vec2(bo, 0))).rgb)
       .add(texture(caveTex, st.add(vec2(0, bo.mul(2)))).rgb).add(texture(caveTex, st.sub(vec2(0, bo.mul(2)))).rgb).mul(0.2);
@@ -898,7 +898,7 @@ async function buildPlate(v) {
     // 水面：眼下方贴地一片极淡的暗红倒影，越靠近眼睛正下方越明显
     const de = length(positionWorld.sub(vec3(EYE_POS.x, GROUND_Y, EYE_POS.z)));
     const onWater = smoothstep(GROUND_Y + 0.35, GROUND_Y + 0.02, positionWorld.y);
-    col.addAssign(vec3(0.05, 0.002, 0.0015).mul(exp(de.mul(de).mul(-0.045))).mul(onWater.mul(0.8).add(0.2)).mul(eg));
+    col.addAssign(vec3(0.035, 0.0015, 0.001).mul(exp(de.mul(de).mul(-0.12))).mul(onWater.mul(0.95).add(0.05)).mul(eg));
     return col.mul(uPlateGain);
   })();
   const m = new THREE.Mesh(geo, mat);
