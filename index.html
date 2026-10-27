@@ -92,6 +92,10 @@ const EYE_R = +(new URLSearchParams(location.search).get('eyer') || 1.3);
 // v7：竖瞳是一道黑色梭形裂缝，四周一圈放射状的红光虹膜；外圈改成黑墨漩涡，夹着零星红火星
 const FRAC = [0.18, 0.42, 0.11, 0.02, 0.23, 0.04];
 const FRAC_SPHERE = FRAC[1];
+const GLINT_W = +(new URLSearchParams(location.search).get('gw') || 0.0018);
+const GLINT_K = +(new URLSearchParams(location.search).get('glint') || 0.5);   // v13：水面红瞳光路强度，?glint= 调
+const DUST_K = +(new URLSearchParams(location.search).get('dk') || 1.8);
+const DUST_ON = new URLSearchParams(location.search).get('dust') === '0' ? 0 : 1;   // v13：空气浮尘，?dust=0 关
 const MIST_ON = new URLSearchParams(location.search).get('mist') === '1' ? 1 : 0;   // v10.1：她要去掉白色雾粒噪点，?mist=1 才画
 const SLIT_W = 0.085, IRIS_R = 0.6;   // 竖瞳半宽、虹膜半径（× 眼球半径）
 // v8 低机位仰拍（横屏）：相机在眼球右前方贴地，朝左上仰拍；和 Blender 背景板 low 版同一台相机。?cam=front 回到旧的正面构图
@@ -900,6 +904,26 @@ async function buildPlate(v) {
     const de = length(positionWorld.sub(vec3(EYE_POS.x, GROUND_Y, EYE_POS.z)));
     const onWater = smoothstep(GROUND_Y + 0.35, GROUND_Y + 0.02, positionWorld.y);
     col.addAssign(vec3(0.035, 0.0015, 0.001).mul(exp(de.mul(de).mul(-0.12))).mul(onWater.mul(0.95).add(0.05)).mul(eg));
+    // v13：水面上的「红瞳光路」——真实倒影落在画框外（机位太低），所以按粗糙水面的闪光路径来做：
+    // 镜像视线和指向眼睛的方向越对齐越亮，再用流动的细碎波纹切成一粒粒红色碎光，只动材质、不加灯
+    if (LOW) {
+      const Pw = positionWorld;
+      // 粗糙水面的闪光路径近似：只看水平方位角，落在「镜头→眼球」这条竖线附近的水面才有碎光
+      const hv = normalize(vec2(Pw.x.sub(cameraPosition.x), Pw.z.sub(cameraPosition.z)));
+      const he = normalize(vec2(float(EYE_POS.x).sub(cameraPosition.x), float(EYE_POS.z).sub(cameraPosition.z)));
+      const az = float(1).sub(dot(hv, he));                         // ≈ 方位角差² / 2
+      const path = exp(az.mul(-1.0 / GLINT_W));
+      const t2 = time;
+      const w1 = sin(Pw.x.mul(9.3).add(Pw.z.mul(2.1)).add(t2.mul(0.9)));
+      const w2 = sin(Pw.z.mul(17.7).sub(Pw.x.mul(3.4)).sub(t2.mul(1.3)));
+      const w3 = sin(Pw.x.mul(31.0).add(Pw.z.mul(23.0)).add(t2.mul(2.1)));
+      const rip = w1.mul(0.45).add(w2.mul(0.35)).add(w3.mul(0.2));
+      const spark = smoothstep(0.35, 0.95, rip);
+      const wat = smoothstep(GROUND_Y + 0.22, GROUND_Y + 0.02, Pw.y);
+      const fadeNear = smoothstep(0.4, 1.6, length(Pw.sub(cameraPosition)));
+      const glint = path.mul(spark.mul(0.92).add(0.08)).mul(wat).mul(fadeNear).mul(eg).mul(GLINT_K);
+      col.addAssign(vec3(0.55, 0.035, 0.02).mul(glint));
+    }
     return col.mul(uPlateGain);
   })();
   const m = new THREE.Mesh(geo, mat);
@@ -1134,6 +1158,45 @@ var reflPts;
   reflPts = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
   reflPts.count = REFL_N; reflPts.frustumCulled = false; reflPts.renderOrder = -10; reflPts.name = 'reflFog';
   scene.add(reflPts);
+}
+
+// ───────────────────────── v13：空气浮尘 ─────────────────────────
+// 极稀、极暗的冷灰微尘，在镜头和眼球之间慢慢飘；靠近眼睛的染一点暗红，离镜头很近的放大变淡＝虚焦光斑。
+// 不是雾粒（她不要白噪点），数量少、亮度低、尺寸有大有小。
+const DUST_N = DUST_ON ? (isMobile ? 600 : 1400) : 0;
+var dustPts;
+if (DUST_N) {
+  const mat = new THREE.SpriteNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  mat.fog = false;
+  const i = instanceIndex;
+  const h1 = hash(i.add(101)), h2 = hash(i.add(733)), h3 = hash(i.add(1999)), h4 = hash(i.add(4241));
+  // 分布：镜头前到眼后一块空间，偏向中景
+  const lo = vec3(-3.5, GROUND_Y + 0.05, -3.0), span = vec3(9.0, 4.6, 8.2);
+  const t = time.mul(0.6);
+  const yRise = fract(h2.add(t.mul(0.004).mul(h4.add(0.5))));          // 很慢地往上飘，循环
+  const base = lo.add(span.mul(vec3(h1, yRise, h3)));
+  const wob = vec3(sin(t.mul(0.07).add(h4.mul(40.0))), sin(t.mul(0.05).add(h1.mul(30.0))).mul(0.6), cos(t.mul(0.06).add(h3.mul(50.0)))).mul(0.35);
+  const P = base.add(wob);
+  mat.positionNode = P;
+  const dCam = length(P.sub(cameraPosition));
+  const bokeh = smoothstep(2.2, 0.6, dCam);                               // 离镜头很近 → 虚焦
+  const sz = float(0.012).add(h4.mul(h4).mul(0.03)).mul(float(1).add(bokeh.mul(5.0)));
+  mat.scaleNode = vec2(sz, sz);
+  mat.colorNode = Fn(() => {
+    const d = length(uv().sub(0.5)).mul(2);
+    const core = pow(clamp(float(1).sub(d), 0, 1), mix(float(1.8), float(0.6), bokeh));
+    const tw = sin(time.mul(0.8).add(h1.mul(60.0))).mul(0.3).add(0.7);   // 微微闪
+    const edge = smoothstep(0.0, 0.08, yRise).mul(smoothstep(1.0, 0.85, yRise));
+    const dE = length(P.sub(vec3(EYE_POS.x, EYE_POS.y, EYE_POS.z)));
+    const red = exp(dE.mul(dE).mul(-0.12)).mul(float(0.35).add(uEyeGlow.mul(0.65)));
+    const far = smoothstep(14.0, 5.0, dCam);
+    const a = core.mul(tw).mul(edge).mul(far).mul(mix(float(0.55), float(0.1), bokeh)).mul(DUST_K);
+    const c = mix(vec3(0.55, 0.62, 0.74), vec3(1.0, 0.12, 0.08), clamp(red.mul(0.8), 0, 0.8));
+    return vec4(c.mul(a), a);
+  })();
+  dustPts = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+  dustPts.count = DUST_N; dustPts.frustumCulled = false; dustPts.renderOrder = 5; dustPts.name = 'dust';
+  scene.add(dustPts);
 }
 
 // ───────────────────────── 前景岩石剪影（v4）：贴着画面边缘的一层近景黑石，给前/中/后三层纵深 ─────────────────────────
